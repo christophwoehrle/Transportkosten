@@ -35,6 +35,21 @@ Voraussetzung: **Python 3** (nur Standardbibliothek, keine Pakete nötig).
 
 ---
 
+## Testen
+
+Ein automatisierter Rauchtest baut `dist/` neu und prüft die Kernzahlen
+(Umsatz-, Fracht-, Fahrten- und Kundensumme) in beiden gebauten HTML-Dateien —
+ganz ohne Browser oder Fremdpakete:
+
+```bash
+python scripts/test_smoke.py             # neu bauen + prüfen
+python scripts/test_smoke.py --no-build  # nur vorhandene dist/-Dateien prüfen
+```
+
+Exit-Code 0 = bestanden, 1 = eine Kennzahl weicht ab (CI-/Pre-Push-tauglich).
+
+---
+
 ## Projektstruktur
 
 ```

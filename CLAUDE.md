@@ -74,10 +74,23 @@ die eingebetteten Daten vom Live-Upload ab.
 
 ## Testen
 
-Ein schneller Rauchtest mit Playwright (chromium) prüft die Kernzahlen:
+Automatisierter Rauchtest (nur Python-Standardbibliothek, kein Browser nötig).
+Baut `dist/` neu und prüft die Kernzahlen in **beiden** gebauten HTML-Dateien:
+
+```bash
+python scripts/test_smoke.py             # neu bauen + prüfen
+python scripts/test_smoke.py --no-build  # nur die vorhandenen dist/-Dateien prüfen
+```
+
+Exit-Code 0 = bestanden, 1 = mind. eine Kennzahl weicht ab — direkt für CI /
+einen Pre-Push-Hook geeignet. Die Sollwerte stehen zentral in
+`scripts/test_smoke.py` (`EXPECTED`) und sind bei bewusster Datenaktualisierung
+dort mitzuziehen.
+
+Die geprüften Kennzahlen entsprechen genau dem manuellen Browser-Test
+(`dist/…Desktop.html` laden, dann im Seitenkontext auswerten):
 
 ```js
-// dist/…Desktop.html im Browser laden, dann im Seitenkontext:
 Math.round(REVENUE_TRIPS.reduce((s,t)=>s+(t.revenue||0),0)*100)/100  // Umsatzsumme
 Math.round(TRIPS.reduce((s,t)=>s+(t.price||0),0)*100)/100            // Frachtsumme
 crmFahrtStats({}).gesamtFahrten                                       // Fahrtenzahl
