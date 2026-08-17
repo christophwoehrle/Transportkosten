@@ -1529,6 +1529,9 @@ function sheetRowsAsObjects(wb){
       const row = rows[r]; if(!row) continue;
       const o = {};
       head.forEach((h,ci)=> o[h] = row[ci]);
+      // Rohzellen nach Spaltenindex mitführen — für positionsbezogene Spalten
+      // wie die Lieferadresse-PLZ in Spalte M (A=0 … M=12).
+      o.__cells = row;
       out.push(o);
     }
     return out;
@@ -1553,7 +1556,11 @@ function processFrachtUpload(wb){
   for(const o of rows){
     // Spalte B kann "Frachtzone", "Zone" oder "Land" heißen (Inhalt: Zone/Nummer)
     const zone = col(o,'frachtzone','zone','land');
-    const plz  = col(o,'plz','postleit');
+    // Lieferadresse hat Vorrang: ihre PLZ steht in Spalte M (Index 12). Ist die
+    // Spalte befüllt, gilt diese PLZ, sonst die Standardadresse in Spalte C.
+    const plzStd    = col(o,'plz','postleit');            // Spalte C (Fallback)
+    const plzLiefer = o.__cells ? o.__cells[12] : null;   // Spalte M (Vorrang)
+    const plz = (plzLiefer!=null && String(plzLiefer).trim()!=='') ? plzLiefer : plzStd;
     const land = frachtZoneToCountry(zone, plz);
     const uname = land ? plzToUnitName(land, plz) : null;
     // Spalte D: Fracht-Entgelt / Frachtpreis / Preis / Entgelt

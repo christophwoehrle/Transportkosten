@@ -157,6 +157,11 @@ Siehe `docs/DATEN-AKTUALISIEREN.md` für Details zu den erwarteten Excel-Spalten
 | H      | Anzahl Belege       |
 | I      | Kundenkürzel        |
 | J      | Artikel             |
+| M      | Lieferadresse-PLZ (Vorrang, s. u.) |
+
+Weichen **Rechnungs- und Lieferadresse** ab, hat die Lieferadresse Vorrang:
+Ist die PLZ in **Spalte M** befüllt, wird sie verwendet, sonst die PLZ aus
+**Spalte C**.
 
 **Umsatz** (Dateiname enthält „umsatz“):
 

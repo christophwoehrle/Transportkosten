@@ -62,6 +62,12 @@ die eingebetteten Daten vom Live-Upload ab.
   genutzt — die Mini-Variante wirft `parse_xlscfb is not defined`.
 - **Dateityp-Erkennung** beim Upload erfolgt zuerst am **Dateinamen**
   (`fracht` → Ausgangsfrachten, `umsatz` → Umsatz), dann an den Spalten.
+- **Lieferadresse vor Rechnungsadresse (Frachtenauswertung):** Weichen die
+  Adressen ab, hat die **Lieferadresse** Vorrang. Deren PLZ steht in **Spalte M**
+  (Index 12). Ist Spalte M befüllt, gilt diese PLZ, sonst die Standardadresse in
+  **Spalte C**. Die Regel steckt gespiegelt in `app.js` (`processFrachtUpload`,
+  Live-Upload) **und** `scripts/data/build_fracht_data.py` (Einbettung) — beide
+  bei Änderungen mitziehen.
 - **Spaltennamen variieren** (z. B. Kunde als `Kunde` oder `adressesb`). Die
   Erkennung nutzt exakte Treffer vor Präfix-Treffern; siehe `col(...)` in app.js
   bzw. `find_col(...)` in den Python-Skripten.
