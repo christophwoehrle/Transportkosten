@@ -4,7 +4,9 @@ const COUNTRIES = APP_DATA.countries;
 const EUROPE_BBOX = APP_DATA.europeBbox;
 const PLZ_MAPPING = APP_DATA.plzMapping || {};
 const EXCEL_UPLOAD_DATE = APP_DATA.excelUploadDate || null;
-const COUNTRY_ORDER = ['Frankreich','Deutschland','Italien','Spanien','Portugal','Österreich','Schweiz','Slowenien','Belgien','Niederlande','Polen','UK','Irland','Schweden','Norwegen','Dänemark','Finnland','Island'];
+const COUNTRY_ORDER = ['Frankreich','Deutschland','Italien','Spanien','Portugal','Österreich','Schweiz','Slowenien','Belgien','Niederlande','Polen','UK','Irland','Schweden','Norwegen','Dänemark','Finnland','Island',
+  // Weitere EU-Länder ohne bisherige Fahrten/Umsätze (nur Länderumriss, erscheinen ohne Wert):
+  'Bulgarien','Estland','Griechenland','Kroatien','Lettland','Litauen','Luxemburg','Malta','Rumänien','Slowakei','Tschechien','Ungarn','Zypern'];
 const EUROPE_KEY = '__EUROPE__';
 const DEFAULT_CARRIER = 'Standard';
 
