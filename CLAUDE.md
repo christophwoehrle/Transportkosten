@@ -102,5 +102,5 @@ Math.round(TRIPS.reduce((s,t)=>s+(t.price||0),0)*100)/100            // Frachtsu
 crmFahrtStats({}).gesamtFahrten                                       // Fahrtenzahl
 ```
 
-Sollwerte des aktuellen Stands: Umsatz 33.206.300,38 €, Fracht 3.762.146,70 €,
-3534 Fahrten, 282 Kunden.
+Sollwerte des aktuellen Stands: Umsatz 33.206.300,38 €, Fracht 4.110.519,79 €,
+3931 Fahrten, 290 Kunden.

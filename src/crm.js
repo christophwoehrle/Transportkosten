@@ -8,7 +8,7 @@ const CRM_PREFIX = 'crm::';
 // Datenversion: bei jeder Änderung an den eingebetteten Demo-/Realdaten erhöhen.
 // Ist die gespeicherte Version älter, werden die eingebetteten Daten neu geladen
 // (so verschwinden z. B. alte 2025-Demo-Fahrten aus dem lokalen Speicher).
-const CRM_DATA_VERSION = 5;
+const CRM_DATA_VERSION = 6;
 const CRM_KEYS = {
   kunden:   CRM_PREFIX + 'kunden',
   umsaetze: CRM_PREFIX + 'umsaetze',

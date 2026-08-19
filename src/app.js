@@ -1556,10 +1556,12 @@ function processFrachtUpload(wb){
   for(const o of rows){
     // Spalte B kann "Frachtzone", "Zone" oder "Land" heißen (Inhalt: Zone/Nummer)
     const zone = col(o,'frachtzone','zone','land');
-    // Lieferadresse hat Vorrang: ihre PLZ steht in Spalte M (Index 12). Ist die
-    // Spalte befüllt, gilt diese PLZ, sonst die Standardadresse in Spalte C.
-    const plzStd    = col(o,'plz','postleit');            // Spalte C (Fallback)
-    const plzLiefer = o.__cells ? o.__cells[12] : null;   // Spalte M (Vorrang)
+    // Lieferadresse hat Vorrang: ihre PLZ steht in Spalte M (Index 12), die
+    // Standard-/Rechnungsadresse in Spalte C (Index 2). Beide werden BEWUSST
+    // positionsbezogen gelesen — in der Frachtenauswertung tragen beide Spalten
+    // die Überschrift „PLZ", die Header-Erkennung wäre also nicht eindeutig.
+    const plzLiefer = o.__cells ? o.__cells[12] : null;                    // Spalte M (Vorrang)
+    const plzStd    = o.__cells ? o.__cells[2] : col(o,'plz','postleit');  // Spalte C (Fallback)
     const plz = (plzLiefer!=null && String(plzLiefer).trim()!=='') ? plzLiefer : plzStd;
     const land = frachtZoneToCountry(zone, plz);
     const uname = land ? plzToUnitName(land, plz) : null;
@@ -1586,7 +1588,7 @@ function processFrachtUpload(wb){
     if(kcode) customers.add(kcode);
     if(pr!=null && !isNaN(pr)){ sumPrice += pr; nPrice++; }
     newTrips.push({
-      date: iso, country: land, unit: uname, plz: plz!=null?String(plz):'',
+      date: iso, country: land, unit: uname, plz: plz!=null?String(plz).trim():'',
       price: (pr!=null && !isNaN(pr)) ? pr : 0,
       carrier: cname, customer: kcode,
       ls: belegNr!=null?String(belegNr):'', docs: (belegAnz!=null&&!isNaN(belegAnz))?belegAnz:1,

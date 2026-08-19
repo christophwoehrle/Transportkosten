@@ -40,9 +40,9 @@ MOBIL = DIST / "Transportpreis-Atlas_Mobil.html"
 # Bei bewusster Datenaktualisierung hier mitziehen.
 EXPECTED = {
     "umsatz": 33206300.38,   # Umsatzsumme in €
-    "fracht": 3762146.70,    # Frachtsumme in €
-    "fahrten": 3534,         # Gesamtzahl Fahrten
-    "kunden": 282,           # Anzahl Frachtkunden
+    "fracht": 4110519.79,    # Frachtsumme in €
+    "fahrten": 3931,         # Gesamtzahl Fahrten
+    "kunden": 290,           # Anzahl Frachtkunden
 }
 # Toleranz für die (gerundeten) Euro-Summen.
 EUR_EPS = 0.005
