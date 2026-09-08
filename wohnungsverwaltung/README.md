@@ -25,6 +25,21 @@ npm run preview    # gebaute App lokal ausliefern
 npm run typecheck  # TypeScript prüfen ohne Build
 ```
 
+## Schnelltest ohne Build: `tester.html`
+
+Wer die App **ohne Node/Build** ausprobieren möchte, öffnet einfach
+[`tester.html`](./tester.html) im Browser (Doppelklick genügt). Diese Datei ist
+ein eigenständiger Single-File-Port der App: React, Dexie und Tailwind werden per
+CDN geladen und der Code per Babel direkt im Browser transpiliert – kein
+`npm install` nötig.
+
+- Deckt alle Funktionen ab: Dashboard-Zeitstrahl, Wohnungen-CRUD mit Suche, die
+  6 Reiter, Upload/Kamera-Scan, Warmmiete- und NK-Berechnung, Druck-/PDF-Ansicht.
+- Daten liegen – wie in der echten App – lokal in IndexedDB (`wohnungsverwaltung`).
+- **Hinweis:** Für den ersten Aufruf ist eine Internetverbindung nötig (CDN-Libs);
+  danach cacht der Browser sie. Der Tester dient zum schnellen Ausprobieren – die
+  produktive App ist die Vite-Variante oben (`npm run dev`).
+
 ## Funktionen
 
 - **Dashboard mit Zeitstrahl** der 10-Jahres-Frist (Spekulationsfrist § 23 EStG):

@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Wohnungsverwaltung – HTML-Tester</title>
+    <meta name="theme-color" content="#0f172a" />
+
+    <!-- Diese Datei ist ein eigenständiger Tester: einfach im Browser öffnen.
+         Sie bildet die React/Vite-App (src/) ohne Build nach – React, Dexie und
+         Tailwind werden per CDN geladen und der Code per Babel im Browser
+         transpiliert. Für den ERSTEN Aufruf ist eine Internetverbindung nötig
+         (CDN); danach cacht der Browser die Libs. Daten liegen wie in der echten
+         App lokal in IndexedDB. -->
+
+    <script src="https://cdn.tailwindcss.com/3.4.13"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              border: "hsl(214.3 31.8% 91.4%)",
+              input: "hsl(214.3 31.8% 91.4%)",
+              ring: "hsl(222.2 84% 4.9%)",
+              background: "hsl(0 0% 100%)",
+              foreground: "hsl(222.2 84% 4.9%)",
+              primary: { DEFAULT: "hsl(222.2 47.4% 11.2%)", foreground: "hsl(210 40% 98%)" },
+              secondary: { DEFAULT: "hsl(210 40% 96.1%)", foreground: "hsl(222.2 47.4% 11.2%)" },
+              muted: { DEFAULT: "hsl(210 40% 96.1%)", foreground: "hsl(215.4 16.3% 46.9%)" },
+              accent: { DEFAULT: "hsl(210 40% 96.1%)", foreground: "hsl(222.2 47.4% 11.2%)" },
+              destructive: { DEFAULT: "hsl(0 72% 51%)", foreground: "hsl(210 40% 98%)" },
+              card: { DEFAULT: "hsl(0 0% 100%)", foreground: "hsl(222.2 84% 4.9%)" },
+            },
+            borderRadius: { lg: "0.75rem", md: "0.5rem", sm: "0.375rem" },
+          },
+        },
+      };
+    </script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/4.0.8/dexie.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
+
+    <style>
+      body { margin: 0; background: hsl(210 40% 98%); color: hsl(222.2 84% 4.9%);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased; }
+      .print-only { display: none; }
+      @media print {
+        .no-print { display: none !important; }
+        .print-only { display: block !important; position: absolute; inset: 0; margin: 0; padding: 24px; background: #fff; }
+      }
+      #boot { padding: 40px; text-align: center; color: hsl(215.4 16.3% 46.9%); font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div id="boot">Lädt … (React/Dexie/Tailwind werden per CDN geladen)</div></div>
+
+    <script type="text/babel" data-presets="react">
+      const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+      /* ------------------------------------------------------------------ */
+      /*  Hilfsfunktionen (Spiegel von src/lib/utils.ts & iban.ts)          */
+      /* ------------------------------------------------------------------ */
+      const eur = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+      const formatEuro = (v) => (v == null || Number.isNaN(v) ? "–" : eur.format(v));
+      const formatDate = (iso) => {
+        if (!iso) return "–";
+        const d = new Date(iso);
+        return Number.isNaN(d.getTime()) ? "–" : d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+      };
+      const parseNumber = (value) => {
+        const t = String(value).trim();
+        if (t === "") return null;
+        const n = Number(t.replace(/\./g, "").replace(",", "."));
+        return Number.isNaN(n) ? null : n;
+      };
+      const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+
+      const TAG_MS = 86400000;
+      function berechneFrist(kaufdatum, jetzt = new Date()) {
+        const start = kaufdatum ? new Date(kaufdatum) : null;
+        if (!start || Number.isNaN(start.getTime()))
+          return { ende: null, fortschritt: 0, tageVerbleibend: null, status: "unbekannt", labelVerbleibend: "Kein Kaufdatum" };
+        const ende = new Date(start); ende.setFullYear(ende.getFullYear() + 10);
+        const gesamt = ende - start, verstrichen = jetzt - start;
+        const fortschritt = Math.max(0, Math.min(100, (verstrichen / gesamt) * 100));
+        const tage = Math.ceil((ende - jetzt) / TAG_MS);
+        let status, label;
+        if (tage <= 0) { status = "gruen"; label = "Frist erreicht"; }
+        else if (tage <= 365) { status = "gelb"; label = restlauf(tage); }
+        else { status = "rot"; label = restlauf(tage); }
+        return { ende, fortschritt, tageVerbleibend: tage, status, labelVerbleibend: label };
+      }
+      function restlauf(tage) {
+        if (tage <= 0) return "Frist erreicht";
+        const j = Math.floor(tage / 365), m = Math.floor((tage % 365) / 30);
+        if (j > 0) return m > 0 ? `noch ${j} J. ${m} Mon.` : `noch ${j} Jahr${j === 1 ? "" : "e"}`;
+        if (m > 0) return `noch ${m} Monat${m === 1 ? "" : "e"}`;
+        return `noch ${tage} Tag${tage === 1 ? "" : "e"}`;
+      }
+      function monateImZeitraum(von, bis) {
+        if (!von || !bis) return 12;
+        const a = new Date(von), b = new Date(bis);
+        if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 12;
+        const m = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + 1;
+        return m > 0 ? m : 12;
+      }
+      const normIban = (s) => s.replace(/\s+/g, "").toUpperCase();
+      function isValidIban(input) {
+        const iban = normIban(input);
+        if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(iban)) return false;
+        const re = iban.slice(4) + iban.slice(0, 4);
+        const num = re.replace(/[A-Z]/g, (c) => (c.charCodeAt(0) - 55).toString());
+        let rem = 0;
+        for (let i = 0; i < num.length; i += 7) rem = Number(String(rem) + num.slice(i, i + 7)) % 97;
+        return rem === 1;
+      }
+      const isValidBic = (input) => /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(input.replace(/\s+/g, "").toUpperCase());
+
+      const AUSSTATTUNG = ["Einbauküche", "Keller", "Aufzug", "Stellplatz", "Garage", "Gäste-WC", "Fußbodenheizung", "Barrierefrei"];
+      const HEIZUNGSARTEN = ["Gas", "Öl", "Fernwärme", "Wärmepumpe", "Nachtspeicher", "Pellets", "Sonstige"];
+      const DOK_KATEGORIEN = { notarvertrag: "Notarvertrag", grundbuch: "Grundbuchauszug", mietvertrag: "Mietvertrag", hausverwaltung: "Hausverwaltungs-Abrechnung", sonstiges: "Sonstiges" };
+
+      /* ------------------------------------------------------------------ */
+      /*  Datenzugriff: Repository-Schicht über Dexie (Spiegel von data/)   */
+      /* ------------------------------------------------------------------ */
+      const db = new Dexie("wohnungsverwaltung");
+      db.version(1).stores({
+        wohnungen: "id, bezeichnung, ort, kaufdatum, updatedAt",
+        dokumente: "id, wohnungId, kategorie, datum, createdAt",
+      });
+
+      function leereWohnung() {
+        const now = Date.now();
+        return {
+          id: uid(), bezeichnung: "", strasse: "", plz: "", ort: "", wohnflaeche: null, zimmer: null,
+          baujahr: null, geschoss: "", ausstattungText: "", ausstattungFeatures: [],
+          balkonTerrasse: { vorhanden: false, anzahl: null }, heizungsart: "Gas", kaufpreis: null, kaufdatum: "",
+          finanzierung: { bank: "", darlehenssumme: null, restschuld: null, zins: null, tilgung: null, laufzeitJahre: null, kreditvertragsnummer: "", ansprechpartner: { name: "", email: "", telefon: "" } },
+          mieter: { name: "", strasse: "", plz: "", ort: "", telefon: "", email: "", iban: "", bic: "", einzugsdatum: "", auszugsdatum: "" },
+          miete: { kaltmiete: null, betriebskosten: null },
+          nebenkosten: { zeitraumVon: "", zeitraumBis: "", posten: [] },
+          createdAt: now, updatedAt: now,
+        };
+      }
+
+      function seed() {
+        const now = Date.now();
+        const base = (o) => Object.assign(leereWohnung(), { createdAt: now, updatedAt: now }, o);
+        return [
+          base({ bezeichnung: "Altbau Schwabing", strasse: "Hohenzollernstraße 42", plz: "80801", ort: "München",
+            wohnflaeche: 78, zimmer: 3, baujahr: 1910, geschoss: "2. OG", ausstattungText: "Stuckdecken, saniert 2015.",
+            ausstattungFeatures: ["Einbauküche", "Keller", "Gäste-WC"], balkonTerrasse: { vorhanden: true, anzahl: 1 },
+            heizungsart: "Gas", kaufpreis: 520000, kaufdatum: "2015-06-15",
+            finanzierung: { bank: "Sparkasse München", darlehenssumme: 380000, restschuld: 210000, zins: 1.8, tilgung: 3, laufzeitJahre: 20, kreditvertragsnummer: "SPK-2015-778812", ansprechpartner: { name: "Frau Berger", email: "berger@sparkasse-muenchen.example", telefon: "+49 89 1234560" } },
+            mieter: { name: "Julia Sommer", strasse: "Hohenzollernstraße 42", plz: "80801", ort: "München", telefon: "+49 170 1112233", email: "julia.sommer@example.com", iban: "DE89370400440532013000", bic: "COBADEFFXXX", einzugsdatum: "2019-04-01", auszugsdatum: "" },
+            miete: { kaltmiete: 1180, betriebskosten: 220 },
+            nebenkosten: { zeitraumVon: "2024-01-01", zeitraumBis: "2024-12-31", posten: [
+              { id: uid(), bezeichnung: "Grundsteuer", betrag: 310, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Wasser/Abwasser", betrag: 640, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Müllabfuhr", betrag: 180, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Hausreinigung", betrag: 420, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Verwaltergebühr", betrag: 300, umlagefaehig: false },
+              { id: uid(), bezeichnung: "Instandhaltungsrücklage", betrag: 900, umlagefaehig: false },
+            ] } }),
+          base({ bezeichnung: "Neubau am Park", strasse: "Parkallee 7", plz: "60486", ort: "Frankfurt am Main",
+            wohnflaeche: 64, zimmer: 2, baujahr: 2017, geschoss: "4. OG", ausstattungText: "Bodentiefe Fenster, Aufzug.",
+            ausstattungFeatures: ["Einbauküche", "Aufzug", "Stellplatz", "Fußbodenheizung"], balkonTerrasse: { vorhanden: true, anzahl: 1 },
+            heizungsart: "Fernwärme", kaufpreis: 410000, kaufdatum: "2016-12-20",
+            finanzierung: { bank: "ING", darlehenssumme: 320000, restschuld: 240000, zins: 2.4, tilgung: 2, laufzeitJahre: 25, kreditvertragsnummer: "ING-99-4451207", ansprechpartner: { name: "Herr Klein", email: "klein@ing.example", telefon: "+49 69 5550000" } },
+            mieter: { name: "Familie Demir", strasse: "Parkallee 7", plz: "60486", ort: "Frankfurt am Main", telefon: "+49 171 9988776", email: "demir@example.com", iban: "DE02120300000000202051", bic: "BYLADEM1001", einzugsdatum: "2021-09-15", auszugsdatum: "" },
+            miete: { kaltmiete: 980, betriebskosten: 190 },
+            nebenkosten: { zeitraumVon: "2024-01-01", zeitraumBis: "2024-12-31", posten: [
+              { id: uid(), bezeichnung: "Heizung/Fernwärme", betrag: 720, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Wasser/Abwasser", betrag: 380, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Aufzugswartung", betrag: 260, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Allgemeinstrom", betrag: 140, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Verwaltergebühr", betrag: 288, umlagefaehig: false },
+            ] } }),
+          base({ bezeichnung: "Stadthaus Ost", strasse: "Lindenweg 12", plz: "04277", ort: "Leipzig",
+            wohnflaeche: 92, zimmer: 4, baujahr: 1998, geschoss: "EG", ausstattungText: "Gartenanteil, ruhige Lage.",
+            ausstattungFeatures: ["Keller", "Stellplatz", "Barrierefrei"], balkonTerrasse: { vorhanden: true, anzahl: 2 },
+            heizungsart: "Wärmepumpe", kaufpreis: 295000, kaufdatum: "2022-05-10",
+            finanzierung: { bank: "DKB", darlehenssumme: 240000, restschuld: 228000, zins: 3.6, tilgung: 2, laufzeitJahre: 30, kreditvertragsnummer: "", ansprechpartner: { name: "Frau Weiß", email: "weiss@dkb.example", telefon: "+49 30 1200000" } },
+            mieter: { name: "Thomas Richter", strasse: "Lindenweg 12", plz: "04277", ort: "Leipzig", telefon: "+49 176 5544332", email: "t.richter@example.com", iban: "DE44500105175407324931", bic: "INGDDEFFXXX", einzugsdatum: "2022-08-01", auszugsdatum: "" },
+            miete: { kaltmiete: 860, betriebskosten: 210 },
+            nebenkosten: { zeitraumVon: "2024-01-01", zeitraumBis: "2024-12-31", posten: [
+              { id: uid(), bezeichnung: "Grundsteuer", betrag: 260, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Wasser/Abwasser", betrag: 520, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Gartenpflege", betrag: 300, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Müllabfuhr", betrag: 200, umlagefaehig: true },
+              { id: uid(), bezeichnung: "Rücklage", betrag: 720, umlagefaehig: false },
+            ] } }),
+        ];
+      }
+
+      const repo = {
+        async ready() {
+          if ((await db.wohnungen.count()) === 0) await db.wohnungen.bulkAdd(seed());
+        },
+        async getWohnungen() { await this.ready(); return (await db.wohnungen.toArray()).sort((a, b) => b.updatedAt - a.updatedAt); },
+        async getWohnung(id) { await this.ready(); return db.wohnungen.get(id); },
+        async saveWohnung(w) { const t = Object.assign({}, w, { updatedAt: Date.now() }); await db.wohnungen.put(t); return t; },
+        async deleteWohnung(id) { await db.transaction("rw", db.wohnungen, db.dokumente, async () => {
+          await db.dokumente.where("wohnungId").equals(id).delete(); await db.wohnungen.delete(id); }); },
+        async getDokumente(wohnungId) { await this.ready(); return (await db.dokumente.where("wohnungId").equals(wohnungId).toArray()).sort((a, b) => b.createdAt - a.createdAt); },
+        async saveDokument(d) { await db.dokumente.put(d); return d; },
+        async deleteDokument(id) { await db.dokumente.delete(id); },
+      };
+
+      /* ------------------------------------------------------------------ */
+      /*  UI-Bausteine                                                       */
+      /* ------------------------------------------------------------------ */
+      const cx = (...a) => a.filter(Boolean).join(" ");
+
+      const Card = ({ className, ...p }) => <div className={cx("rounded-lg border border-border bg-card text-card-foreground shadow-sm", className)} {...p} />;
+      const CardHeader = ({ className, ...p }) => <div className={cx("flex flex-col space-y-1.5 p-6", className)} {...p} />;
+      const CardTitle = ({ className, ...p }) => <h3 className={cx("text-lg font-semibold leading-none tracking-tight", className)} {...p} />;
+      const CardContent = ({ className, ...p }) => <div className={cx("p-6 pt-0", className)} {...p} />;
+
+      const BTN = {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+      };
+      const SIZE = { default: "h-10 px-4 py-2", sm: "h-9 rounded-md px-3 text-sm", icon: "h-9 w-9" };
+      const Button = ({ variant = "default", size = "default", className, ...p }) =>
+        <button className={cx("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-50", BTN[variant], SIZE[size], className)} {...p} />;
+
+      const Input = ({ className, ...p }) => <input className={cx("flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", className)} {...p} />;
+      const Textarea = ({ className, ...p }) => <textarea className={cx("flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", className)} {...p} />;
+      const Select = ({ className, children, ...p }) => <select className={cx("flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", className)} {...p}>{children}</select>;
+
+      const Badge = ({ variant = "default", className, ...p }) => {
+        const v = { default: "bg-primary text-primary-foreground", secondary: "bg-secondary text-secondary-foreground",
+          success: "bg-emerald-100 text-emerald-800", warning: "bg-amber-100 text-amber-800", danger: "bg-rose-100 text-rose-800" };
+        return <span className={cx("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium", v[variant], className)} {...p} />;
+      };
+
+      const Checkbox = ({ checked, onCheckedChange, className, ...rest }) =>
+        <button type="button" role="checkbox" aria-checked={checked} onClick={() => onCheckedChange(!checked)}
+          className={cx("flex h-5 w-5 shrink-0 items-center justify-center rounded border border-input transition-colors", checked ? "bg-primary text-primary-foreground border-primary" : "bg-background", className)} {...rest}>
+          {checked ? <span className="text-[11px] font-bold leading-none">✓</span> : null}
+        </button>;
+
+      function Field({ label, hint, className, children }) {
+        return <div className={cx("space-y-1.5", className)}>
+          <label className="text-sm font-medium">{label}</label>
+          {children}
+          {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+        </div>;
+      }
+      const Grid = ({ children }) => <div className="grid gap-4 sm:grid-cols-2">{children}</div>;
+
+      function NumberInput({ value, onValueChange, ...p }) {
+        const [text, setText] = useState(value == null ? "" : String(value).replace(".", ","));
+        useEffect(() => { if (parseNumber(text) !== value) setText(value == null ? "" : String(value).replace(".", ",")); }, [value]);
+        return <Input inputMode="decimal" value={text} onChange={(e) => { setText(e.target.value); onValueChange(parseNumber(e.target.value)); }} {...p} />;
+      }
+
+      function Dialog({ open, onClose, title, description, children, footer }) {
+        useEffect(() => {
+          if (!open) return;
+          const onKey = (e) => e.key === "Escape" && onClose();
+          document.addEventListener("keydown", onKey);
+          return () => document.removeEventListener("keydown", onKey);
+        }, [open]);
+        if (!open) return null;
+        return <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+          <div className="relative z-10 w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-lg">
+            <div className="mb-4 space-y-1.5">
+              <h2 className="text-lg font-semibold">{title}</h2>
+              {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+            </div>
+            {children}
+            {footer ? <div className="mt-6 flex justify-end gap-2">{footer}</div> : null}
+          </div>
+        </div>;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /*  Dokument-Upload + Kamera-Scan                                      */
+      /* ------------------------------------------------------------------ */
+      function DocumentSection({ wohnungId, kategorien, standardKategorie, titel, beschreibung }) {
+        const [dokumente, setDokumente] = useState([]);
+        const [kategorie, setKategorie] = useState(standardKategorie);
+        const [previews, setPreviews] = useState({});
+        const fileInput = useRef(null), cameraInput = useRef(null);
+
+        const laden = useCallback(async () => {
+          const alle = await repo.getDokumente(wohnungId);
+          setDokumente(alle.filter((d) => kategorien.includes(d.kategorie)));
+        }, [wohnungId]);
+        useEffect(() => { laden(); }, [laden]);
+
+        useEffect(() => {
+          const urls = {};
+          dokumente.forEach((d) => { if (d.mimeType.startsWith("image/")) urls[d.id] = URL.createObjectURL(d.blob); });
+          setPreviews(urls);
+          return () => Object.values(urls).forEach(URL.revokeObjectURL);
+        }, [dokumente]);
+
+        async function handleFiles(files) {
+          if (!files || !files.length) return;
+          for (const file of Array.from(files)) {
+            await repo.saveDokument({ id: uid(), wohnungId, kategorie, titel: file.name || "Unbenannt",
+              datum: new Date().toISOString().slice(0, 10), mimeType: file.type || "application/octet-stream",
+              size: file.size, blob: file, createdAt: Date.now() });
+          }
+          await laden();
+          if (fileInput.current) fileInput.current.value = "";
+          if (cameraInput.current) cameraInput.current.value = "";
+        }
+        function download(dok) {
+          const url = URL.createObjectURL(dok.blob), a = document.createElement("a");
+          a.href = url; a.download = dok.titel; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+        }
+
+        return <div className="space-y-4">
+          <div>
+            <h3 className="text-base font-semibold">{titel}</h3>
+            {beschreibung ? <p className="mt-1 text-sm text-muted-foreground">{beschreibung}</p> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {kategorien.length > 1 ? (
+              <Select value={kategorie} onChange={(e) => setKategorie(e.target.value)} className="w-auto">
+                {kategorien.map((k) => <option key={k} value={k}>{DOK_KATEGORIEN[k]}</option>)}
+              </Select>
+            ) : null}
+            <Button variant="outline" onClick={() => fileInput.current.click()}>⬆️ Datei hochladen</Button>
+            <Button variant="outline" onClick={() => cameraInput.current.click()}>📷 Scannen</Button>
+            <input ref={fileInput} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+            <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+          </div>
+          {dokumente.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Noch keine Dokumente. Lade eine Datei hoch oder scanne sie mit der Kamera.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {dokumente.map((dok) => (
+                <Card key={dok.id}><CardContent className="flex gap-3 p-3">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-2xl">
+                    {previews[dok.id] ? <img src={previews[dok.id]} alt={dok.titel} className="h-full w-full object-cover" /> : (dok.mimeType === "application/pdf" ? "📄" : "🖼️")}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <input value={dok.titel} onChange={async (e) => { await repo.saveDokument(Object.assign({}, dok, { titel: e.target.value })); laden(); }}
+                      className="w-full truncate rounded border border-transparent bg-transparent text-sm font-medium hover:border-input focus:border-input focus:outline-none" />
+                    <p className="mt-0.5 text-xs text-muted-foreground">{DOK_KATEGORIEN[dok.kategorie]} · {formatDate(dok.datum)}</p>
+                    <p className="text-xs text-muted-foreground">{(dok.size / 1024).toFixed(0)} KB</p>
+                    <div className="mt-2 flex gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => download(dok)}>⬇️ Download</Button>
+                      <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={async () => { await repo.deleteDokument(dok.id); laden(); }}>🗑️ Löschen</Button>
+                    </div>
+                  </div>
+                </CardContent></Card>
+              ))}
+            </div>
+          )}
+        </div>;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /*  Reiter                                                             */
+      /* ------------------------------------------------------------------ */
+      function GrunddatenTab({ w, update }) {
+        const toggle = (f) => update({ ausstattungFeatures: w.ausstattungFeatures.includes(f) ? w.ausstattungFeatures.filter((x) => x !== f) : [...w.ausstattungFeatures, f] });
+        return <div className="space-y-6">
+          <Card><CardHeader><CardTitle>Objekt & Adresse</CardTitle></CardHeader><CardContent className="space-y-4">
+            <Field label="Bezeichnung / Name"><Input value={w.bezeichnung} onChange={(e) => update({ bezeichnung: e.target.value })} /></Field>
+            <Field label="Straße & Hausnummer"><Input value={w.strasse} onChange={(e) => update({ strasse: e.target.value })} /></Field>
+            <Grid>
+              <Field label="PLZ"><Input value={w.plz} onChange={(e) => update({ plz: e.target.value })} /></Field>
+              <Field label="Ort"><Input value={w.ort} onChange={(e) => update({ ort: e.target.value })} /></Field>
+            </Grid>
+          </CardContent></Card>
+          <Card><CardHeader><CardTitle>Merkmale</CardTitle></CardHeader><CardContent className="space-y-4">
+            <Grid>
+              <Field label="Wohnfläche (m²)"><NumberInput value={w.wohnflaeche} onValueChange={(v) => update({ wohnflaeche: v })} /></Field>
+              <Field label="Zimmeranzahl"><NumberInput value={w.zimmer} onValueChange={(v) => update({ zimmer: v })} /></Field>
+              <Field label="Baujahr"><NumberInput value={w.baujahr} onValueChange={(v) => update({ baujahr: v })} /></Field>
+              <Field label="Geschoss / Etage"><Input value={w.geschoss} onChange={(e) => update({ geschoss: e.target.value })} /></Field>
+              <Field label="Heizungsart"><Select value={w.heizungsart} onChange={(e) => update({ heizungsart: e.target.value })}>{HEIZUNGSARTEN.map((h) => <option key={h}>{h}</option>)}</Select></Field>
+              <Field label="Balkon / Terrasse (Anzahl)"><NumberInput value={w.balkonTerrasse.anzahl} onValueChange={(v) => update({ balkonTerrasse: { anzahl: v, vorhanden: (v || 0) > 0 } })} placeholder="0 = keiner" /></Field>
+            </Grid>
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Ausstattung</p>
+              <div className="flex flex-wrap gap-x-6 gap-y-2">
+                {AUSSTATTUNG.map((o) => <label key={o} className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={w.ausstattungFeatures.includes(o)} onCheckedChange={() => toggle(o)} />{o}</label>)}
+              </div>
+            </div>
+            <Field label="Weitere Ausstattung (Freitext)"><Textarea value={w.ausstattungText} onChange={(e) => update({ ausstattungText: e.target.value })} /></Field>
+          </CardContent></Card>
+          <Card><CardHeader><CardTitle>Kauf</CardTitle></CardHeader><CardContent><Grid>
+            <Field label="Kaufpreis (€)"><NumberInput value={w.kaufpreis} onValueChange={(v) => update({ kaufpreis: v })} /></Field>
+            <Field label="Kaufdatum (notarieller Vertrag)" hint="Basis für den Zeitstrahl / die 10-Jahres-Frist."><Input type="date" value={w.kaufdatum} onChange={(e) => update({ kaufdatum: e.target.value })} /></Field>
+          </Grid></CardContent></Card>
+        </div>;
+      }
+
+      function FinanzierungTab({ w, update }) {
+        const f = w.finanzierung;
+        const setF = (p) => update({ finanzierung: Object.assign({}, f, p) });
+        const setA = (p) => setF({ ansprechpartner: Object.assign({}, f.ansprechpartner, p) });
+        const nummer = f.kreditvertragsnummer.trim();
+        const cls = "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50";
+        return <div className="space-y-6">
+          <Card><CardHeader><CardTitle>Darlehen</CardTitle></CardHeader><CardContent className="space-y-4">
+            <Field label="Kreditgeber / Bank"><Input value={f.bank} onChange={(e) => setF({ bank: e.target.value })} /></Field>
+            <Grid>
+              <Field label="Darlehenssumme (€)"><NumberInput value={f.darlehenssumme} onValueChange={(v) => setF({ darlehenssumme: v })} /></Field>
+              <Field label="Aktuelle Restschuld (€)"><NumberInput value={f.restschuld} onValueChange={(v) => setF({ restschuld: v })} /></Field>
+              <Field label="Zins (%)"><NumberInput value={f.zins} onValueChange={(v) => setF({ zins: v })} /></Field>
+              <Field label="Tilgung (%)"><NumberInput value={f.tilgung} onValueChange={(v) => setF({ tilgung: v })} /></Field>
+              <Field label="Laufzeit (Jahre)"><NumberInput value={f.laufzeitJahre} onValueChange={(v) => setF({ laufzeitJahre: v })} /></Field>
+              <Field label="Kreditvertragsnummer"><Input value={f.kreditvertragsnummer} onChange={(e) => setF({ kreditvertragsnummer: e.target.value })} /></Field>
+            </Grid>
+          </CardContent></Card>
+          <Card><CardHeader><CardTitle>Ansprechpartner</CardTitle></CardHeader><CardContent className="space-y-4">
+            <Grid>
+              <Field label="Name"><Input value={f.ansprechpartner.name} onChange={(e) => setA({ name: e.target.value })} /></Field>
+              <Field label="Telefon"><Input type="tel" value={f.ansprechpartner.telefon} onChange={(e) => setA({ telefon: e.target.value })} /></Field>
+            </Grid>
+            <Field label="E-Mail"><Input type="email" value={f.ansprechpartner.email} onChange={(e) => setA({ email: e.target.value })} /></Field>
+            <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+              {nummer
+                ? <a className={cls} href={`mailto:${encodeURIComponent(f.ansprechpartner.email)}?subject=${encodeURIComponent("Darlehen Nr. " + nummer)}`}>✉️ E-Mail an Ansprechpartner</a>
+                : <><button className={cls} disabled>✉️ E-Mail an Ansprechpartner</button><p className="text-xs text-muted-foreground">Ohne Kreditvertragsnummer ist der E-Mail-Button deaktiviert – der Betreff soll die Nummer enthalten.</p></>}
+            </div>
+          </CardContent></Card>
+        </div>;
+      }
+
+      function MieterTab({ w, update }) {
+        const m = w.mieter;
+        const setM = (p) => update({ mieter: Object.assign({}, m, p) });
+        const ibanOk = m.iban.trim() === "" || isValidIban(m.iban);
+        const bicOk = m.bic.trim() === "" || isValidBic(m.bic);
+        const cls = "inline-flex h-10 items-center justify-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium hover:bg-accent disabled:pointer-events-none disabled:opacity-50";
+        return <div className="space-y-6">
+          <Card><CardHeader><CardTitle>Mieterdaten</CardTitle></CardHeader><CardContent className="space-y-4">
+            <Field label="Name"><Input value={m.name} onChange={(e) => setM({ name: e.target.value })} /></Field>
+            <Field label="Anschrift (Straße & Hausnummer)"><Input value={m.strasse} onChange={(e) => setM({ strasse: e.target.value })} /></Field>
+            <Grid>
+              <Field label="PLZ"><Input value={m.plz} onChange={(e) => setM({ plz: e.target.value })} /></Field>
+              <Field label="Ort"><Input value={m.ort} onChange={(e) => setM({ ort: e.target.value })} /></Field>
+              <Field label="Telefon"><Input type="tel" value={m.telefon} onChange={(e) => setM({ telefon: e.target.value })} /></Field>
+              <Field label="E-Mail"><Input type="email" value={m.email} onChange={(e) => setM({ email: e.target.value })} /></Field>
+            </Grid>
+            <div className="flex flex-wrap gap-3 border-t border-border pt-4">
+              {m.email ? <a className={cls} href={`mailto:${encodeURIComponent(m.email)}`}>✉️ E-Mail schreiben</a> : <button className={cls} disabled>✉️ E-Mail schreiben</button>}
+              {m.telefon ? <a className={cls} href={`tel:${m.telefon.replace(/\s+/g, "")}`}>📞 Anrufen</a> : <button className={cls} disabled>📞 Anrufen</button>}
+            </div>
+          </CardContent></Card>
+          <Card><CardHeader><CardTitle>Bankverbindung</CardTitle></CardHeader><CardContent><Grid>
+            <Field label="IBAN" hint={ibanOk ? undefined : "Ungültige IBAN (Prüfsumme)."}>
+              <Input value={m.iban} onChange={(e) => setM({ iban: e.target.value })} placeholder="DE.." className={ibanOk ? "" : "border-destructive focus:ring-destructive"} />
+            </Field>
+            <Field label="BIC" hint={bicOk ? undefined : "Ungültiges BIC-Format (8 oder 11 Stellen)."}>
+              <Input value={m.bic} onChange={(e) => setM({ bic: e.target.value })} className={bicOk ? "" : "border-destructive focus:ring-destructive"} />
+            </Field>
+          </Grid></CardContent></Card>
+          <Card><CardHeader><CardTitle>Mietverhältnis</CardTitle></CardHeader><CardContent><Grid>
+            <Field label="Einzugsdatum"><Input type="date" value={m.einzugsdatum} onChange={(e) => setM({ einzugsdatum: e.target.value })} /></Field>
+            <Field label="Auszugsdatum (optional)"><Input type="date" value={m.auszugsdatum} onChange={(e) => setM({ auszugsdatum: e.target.value })} /></Field>
+          </Grid></CardContent></Card>
+          <Card><CardContent className="p-6"><DocumentSection wohnungId={w.id} kategorien={["mietvertrag"]} standardKategorie="mietvertrag" titel="Mietvertrag" beschreibung="Mietvertrag hochladen oder scannen." /></CardContent></Card>
+        </div>;
+      }
+
+      function MieteTab({ w, update }) {
+        const mi = w.miete;
+        const setMi = (p) => update({ miete: Object.assign({}, mi, p) });
+        const warm = (mi.kaltmiete || 0) + (mi.betriebskosten || 0);
+        const Betrag = ({ label, value, betont }) => <div>
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className={betont ? "text-xl font-semibold text-primary" : "text-lg font-medium"}>{formatEuro(value)}</p>
+        </div>;
+        return <div className="space-y-6">
+          <Card><CardHeader><CardTitle>Monatliche Miete</CardTitle></CardHeader><CardContent className="space-y-6">
+            <Grid>
+              <Field label="Kaltmiete (€ / Monat)"><NumberInput value={mi.kaltmiete} onValueChange={(v) => setMi({ kaltmiete: v })} /></Field>
+              <Field label="Betriebskostenvorauszahlung (€ / Monat)"><NumberInput value={mi.betriebskosten} onValueChange={(v) => setMi({ betriebskosten: v })} /></Field>
+            </Grid>
+            <div className="rounded-lg bg-muted p-5"><div className="grid gap-3 sm:grid-cols-3">
+              <Betrag label="Kaltmiete" value={mi.kaltmiete} /><Betrag label="Nebenkosten (VZ)" value={mi.betriebskosten} /><Betrag label="Warmmiete" value={warm} betont />
+            </div></div>
+          </CardContent></Card>
+          <Card><CardHeader><CardTitle>Jahresübersicht</CardTitle></CardHeader><CardContent><div className="grid gap-3 sm:grid-cols-3">
+            <Betrag label="Kaltmiete / Jahr" value={(mi.kaltmiete || 0) * 12} /><Betrag label="Nebenkosten / Jahr" value={(mi.betriebskosten || 0) * 12} /><Betrag label="Warmmiete / Jahr" value={warm * 12} betont />
+          </div></CardContent></Card>
+        </div>;
+      }
+
+      function HausverwaltungTab({ w, update }) {
+        const nk = w.nebenkosten;
+        const setNk = (p) => update({ nebenkosten: Object.assign({}, nk, p) });
+        const setPosten = (posten) => setNk({ posten });
+        const upd = (id, p) => setPosten(nk.posten.map((x) => (x.id === id ? Object.assign({}, x, p) : x)));
+        const summeUml = nk.posten.filter((p) => p.umlagefaehig).reduce((s, p) => s + (p.betrag || 0), 0);
+        const summeGes = nk.posten.reduce((s, p) => s + (p.betrag || 0), 0);
+        const monate = monateImZeitraum(nk.zeitraumVon, nk.zeitraumBis);
+        const vz = (w.miete.betriebskosten || 0) * monate;
+        const diff = summeUml - vz, nach = diff > 0;
+        return <div className="space-y-6">
+          <Card><CardContent className="p-6"><DocumentSection wohnungId={w.id} kategorien={["hausverwaltung", "sonstiges"]} standardKategorie="hausverwaltung" titel="Abrechnungen der Hausverwaltung" beschreibung="Abrechnungen hochladen oder scannen. Die einzelnen Kostenposten trägst du unten ein." /></CardContent></Card>
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle>Nebenkostenabrechnung</CardTitle><Button variant="outline" size="sm" onClick={() => window.print()}>🖨️ Als PDF / Drucken</Button></CardHeader>
+            <CardContent className="space-y-5">
+              <Grid>
+                <Field label="Zeitraum von"><Input type="date" value={nk.zeitraumVon} onChange={(e) => setNk({ zeitraumVon: e.target.value })} /></Field>
+                <Field label="Zeitraum bis" hint={`${monate} Monat(e) im Zeitraum`}><Input type="date" value={nk.zeitraumBis} onChange={(e) => setNk({ zeitraumBis: e.target.value })} /></Field>
+              </Grid>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b">
+                    <th className="h-10 px-3 text-left font-medium text-muted-foreground">Kostenposten</th>
+                    <th className="h-10 px-3 text-left font-medium text-muted-foreground">Betrag</th>
+                    <th className="h-10 px-3 text-center font-medium text-muted-foreground">Umlagefähig</th>
+                    <th className="w-10" />
+                  </tr></thead>
+                  <tbody>
+                    {nk.posten.length === 0 ? <tr><td colSpan={4} className="p-3 text-center text-muted-foreground">Noch keine Posten. Erfasse die Positionen aus der hochgeladenen Abrechnung.</td></tr> : null}
+                    {nk.posten.map((p) => <tr key={p.id} className="border-b">
+                      <td className="p-2"><Input value={p.bezeichnung} onChange={(e) => upd(p.id, { bezeichnung: e.target.value })} placeholder="z. B. Wasser/Abwasser" /></td>
+                      <td className="p-2 w-40"><NumberInput value={p.betrag} onValueChange={(v) => upd(p.id, { betrag: v })} placeholder="0,00" /></td>
+                      <td className="p-2 text-center"><div className="flex justify-center"><Checkbox checked={p.umlagefaehig} onCheckedChange={(c) => upd(p.id, { umlagefaehig: c })} /></div></td>
+                      <td className="p-2"><Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => setPosten(nk.posten.filter((x) => x.id !== p.id))}>🗑️</Button></td>
+                    </tr>)}
+                  </tbody>
+                </table>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setPosten([...nk.posten, { id: uid(), bezeichnung: "", betrag: null, umlagefaehig: true }])}>➕ Posten hinzufügen</Button>
+              <div className="rounded-lg border border-border">
+                <div className="flex items-center justify-between border-b border-border px-4 py-2.5 text-sm"><span className="text-muted-foreground">Umlagefähige Kosten</span><span className="font-medium">{formatEuro(summeUml)}</span></div>
+                <div className="flex items-center justify-between border-b border-border px-4 py-2.5 text-sm"><span className="text-muted-foreground">Geleistete Vorauszahlung ({monate} × {formatEuro(w.miete.betriebskosten)})</span><span className="font-medium">− {formatEuro(vz)}</span></div>
+                <div className={cx("flex items-center justify-between px-4 py-3 text-base font-semibold", nach ? "text-rose-700" : "text-emerald-700")}><span>{nach ? "Nachzahlung Mieter" : "Guthaben Mieter"}</span><span>{formatEuro(Math.abs(diff))}</span></div>
+              </div>
+              <p className="text-xs text-muted-foreground">Nicht umlagefähige Kosten (Summe aller Posten: {formatEuro(summeGes)}) fließen nicht in die Abrechnung ein.</p>
+            </CardContent>
+          </Card>
+          <div className="print-only">
+            <div style={{ fontFamily: "sans-serif", color: "#111", maxWidth: 720 }}>
+              <h1 style={{ fontSize: 20, marginBottom: 4 }}>Nebenkostenabrechnung</h1>
+              <p><strong>Objekt:</strong> {w.bezeichnung} — {[w.strasse, w.plz, w.ort].filter(Boolean).join(", ")}</p>
+              <p><strong>Mieter:</strong> {w.mieter.name || "–"}</p>
+              <p><strong>Zeitraum:</strong> {formatDate(nk.zeitraumVon)} – {formatDate(nk.zeitraumBis)} ({monate} Monate)</p>
+              <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
+                <thead><tr>
+                  <th style={{ borderBottom: "1px solid #999", textAlign: "left", padding: "6px 8px", fontSize: 13 }}>Kostenposten</th>
+                  <th style={{ borderBottom: "1px solid #999", textAlign: "right", padding: "6px 8px", fontSize: 13 }}>Betrag</th>
+                  <th style={{ borderBottom: "1px solid #999", textAlign: "center", padding: "6px 8px", fontSize: 13 }}>Umlagefähig</th>
+                </tr></thead>
+                <tbody>{nk.posten.map((p) => <tr key={p.id}>
+                  <td style={{ borderBottom: "1px solid #ddd", padding: "6px 8px", fontSize: 13 }}>{p.bezeichnung || "–"}</td>
+                  <td style={{ borderBottom: "1px solid #ddd", padding: "6px 8px", fontSize: 13, textAlign: "right" }}>{formatEuro(p.betrag)}</td>
+                  <td style={{ borderBottom: "1px solid #ddd", padding: "6px 8px", fontSize: 13, textAlign: "center" }}>{p.umlagefaehig ? "ja" : "nein"}</td>
+                </tr>)}</tbody>
+              </table>
+              <div style={{ marginTop: 16, fontSize: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0" }}><span>Umlagefähige Kosten</span><span>{formatEuro(summeUml)}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0" }}><span>Geleistete Vorauszahlung</span><span>− {formatEuro(vz)}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: 700, borderTop: "2px solid #111" }}><span>{nach ? "Nachzahlung Mieter" : "Guthaben Mieter"}</span><span>{formatEuro(Math.abs(diff))}</span></div>
+              </div>
+              <p style={{ marginTop: 24, fontSize: 11, color: "#666" }}>Erstellt am {formatDate(new Date().toISOString().slice(0, 10))}. Keine Steuerberatung.</p>
+            </div>
+          </div>
+        </div>;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /*  Seiten                                                             */
+      /* ------------------------------------------------------------------ */
+      const TABS = [
+        { key: "grunddaten", label: "Grunddaten", icon: "🏠", C: GrunddatenTab },
+        { key: "finanzierung", label: "Finanzierung", icon: "💶", C: FinanzierungTab },
+        { key: "grundbuch", label: "Grundbuch & Notar", icon: "🏛️", C: null },
+        { key: "mieter", label: "Mieter", icon: "👥", C: MieterTab },
+        { key: "miete", label: "Miete & Nebenkosten", icon: "🧾", C: MieteTab },
+        { key: "hausverwaltung", label: "Hausverwaltung & NK", icon: "📄", C: HausverwaltungTab },
+      ];
+
+      function WohnungDetail({ id, onBack }) {
+        const [w, setW] = useState(null);
+        const [tab, setTab] = useState("grunddaten");
+        const [gespeichert, setGespeichert] = useState(true);
+        const timer = useRef(null);
+        useEffect(() => { repo.getWohnung(id).then((x) => x ? setW(x) : onBack()); }, [id]);
+        const update = useCallback((patch) => { setW((prev) => prev ? Object.assign({}, prev, patch) : prev); setGespeichert(false); }, []);
+        useEffect(() => {
+          if (!w || gespeichert) return;
+          if (timer.current) clearTimeout(timer.current);
+          timer.current = setTimeout(async () => { await repo.saveWohnung(w); setGespeichert(true); }, 400);
+          return () => timer.current && clearTimeout(timer.current);
+        }, [w, gespeichert]);
+        if (!w) return <p className="text-sm text-muted-foreground">Lädt …</p>;
+        return <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <button onClick={onBack} className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent">←</button>
+              <div>
+                <h1 className="text-xl font-semibold tracking-tight">{w.bezeichnung || "Ohne Namen"}</h1>
+                <p className="text-xs text-muted-foreground">{[w.strasse, w.plz, w.ort].filter(Boolean).join(", ") || "Keine Adresse"}</p>
+              </div>
+            </div>
+            <span className="text-xs text-muted-foreground">{gespeichert ? "✓ Gespeichert" : "Speichert …"}</span>
+          </div>
+          <div className="no-print inline-flex flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
+            {TABS.map((t) => <button key={t.key} onClick={() => setTab(t.key)} className={cx("inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all", tab === t.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}><span>{t.icon}</span><span className="hidden sm:inline">{t.label}</span></button>)}
+          </div>
+          <div>
+            {tab === "grundbuch"
+              ? <Card><CardContent className="p-6"><DocumentSection wohnungId={w.id} kategorien={["notarvertrag", "grundbuch", "sonstiges"]} standardKategorie="notarvertrag" titel="Grundbuch & Notar" beschreibung="Notarverträge, Grundbuchauszüge und weitere Unterlagen hochladen oder scannen." /></CardContent></Card>
+              : (() => { const T = TABS.find((t) => t.key === tab).C; return <T w={w} update={update} />; })()}
+          </div>
+        </div>;
+      }
+
+      function Dashboard({ wohnungen, onOpen }) {
+        const zeilen = useMemo(() => wohnungen.map((w) => ({ w, frist: berechneFrist(w.kaufdatum) })).sort((a, b) => (a.frist.ende ? a.frist.ende.getTime() : Infinity) - (b.frist.ende ? b.frist.ende.getTime() : Infinity)), [wohnungen]);
+        const kauf = wohnungen.reduce((s, w) => s + (w.kaufpreis || 0), 0);
+        const kalt = wohnungen.reduce((s, w) => s + (w.miete.kaltmiete || 0), 0);
+        const badge = { gruen: ["success"], gelb: ["warning"], rot: ["danger"], unbekannt: ["secondary"] };
+        const bar = { gruen: "bg-emerald-500", gelb: "bg-amber-500", rot: "bg-rose-500", unbekannt: "bg-slate-300" };
+        const Stat = ({ label, value }) => <Card><CardContent className="p-5"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p></CardContent></Card>;
+        return <div className="space-y-6">
+          <header><h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1><p className="mt-1 text-sm text-muted-foreground">Übersicht aller Objekte und der 10-Jahres-Fristen.</p></header>
+          <div className="grid gap-4 sm:grid-cols-3"><Stat label="Wohnungen" value={String(wohnungen.length)} /><Stat label="Kaufpreise gesamt" value={formatEuro(kauf)} /><Stat label="Kaltmiete / Monat" value={formatEuro(kalt)} /></div>
+          <Card>
+            <CardHeader><CardTitle>🗓️ Zeitstrahl – 10-Jahres-Frist (Spekulationsfrist)</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              {zeilen.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Wohnung angelegt.</p> : null}
+              {zeilen.map(({ w, frist }) => <button key={w.id} onClick={() => onOpen(w.id)} className="block w-full rounded-lg border border-border p-4 text-left transition-colors hover:bg-accent/50">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><p className="font-medium">{w.bezeichnung || "Ohne Namen"}</p><p className="text-xs text-muted-foreground">{w.ort || "–"} · Kauf: {formatDate(w.kaufdatum)}</p></div>
+                  <div className="text-right"><Badge variant={badge[frist.status][0]}>{frist.labelVerbleibend}</Badge><p className="mt-1 text-xs text-muted-foreground">Frist: {frist.ende ? formatDate(frist.ende.toISOString().slice(0, 10)) : "–"}</p></div>
+                </div>
+                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted"><div className={cx("h-full rounded-full", bar[frist.status])} style={{ width: frist.fortschritt + "%" }} /></div>
+              </button>)}
+            </CardContent>
+          </Card>
+          <p className="rounded-md bg-muted p-3 text-xs text-muted-foreground">ℹ️ Keine Steuerberatung – bitte steuerliche Fragen mit einem Fachberater klären. Die 10-Jahres-Frist bezieht sich auf § 23 EStG (privater Veräußerungsgewinn).</p>
+        </div>;
+      }
+
+      function WohnungenList({ wohnungen, reload, onOpen }) {
+        const [suche, setSuche] = useState("");
+        const [neuOffen, setNeuOffen] = useState(false), [neuName, setNeuName] = useState("");
+        const [loesch, setLoesch] = useState(null);
+        const gefiltert = useMemo(() => {
+          const q = suche.trim().toLowerCase();
+          return !q ? wohnungen : wohnungen.filter((w) => [w.bezeichnung, w.strasse, w.plz, w.ort, w.mieter.name].join(" ").toLowerCase().includes(q));
+        }, [wohnungen, suche]);
+        const varr = { gruen: "success", gelb: "warning", rot: "danger", unbekannt: "secondary" };
+        async function anlegen() { const w = leereWohnung(); w.bezeichnung = neuName.trim() || "Neue Wohnung"; await repo.saveWohnung(w); setNeuOffen(false); setNeuName(""); await reload(); onOpen(w.id); }
+        return <div className="space-y-6">
+          <header className="flex flex-wrap items-center justify-between gap-3">
+            <div><h1 className="text-2xl font-semibold tracking-tight">Wohnungen</h1><p className="mt-1 text-sm text-muted-foreground">Alle Mietobjekte verwalten.</p></div>
+            <Button onClick={() => setNeuOffen(true)}>➕ Wohnung anlegen</Button>
+          </header>
+          <div className="relative max-w-md"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">🔍</span><Input value={suche} onChange={(e) => setSuche(e.target.value)} placeholder="Suchen nach Name, Ort, Mieter …" className="pl-9" /></div>
+          {gefiltert.length === 0 ? (
+            <Card><CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+              <div className="text-4xl">🏢</div>
+              <div><p className="font-medium">{suche ? "Keine Treffer" : "Noch keine Wohnung angelegt"}</p><p className="text-sm text-muted-foreground">{suche ? "Passe die Suche an." : "Lege deine erste Wohnung an, um zu starten."}</p></div>
+              {!suche ? <Button onClick={() => setNeuOffen(true)}>➕ Wohnung anlegen</Button> : null}
+            </CardContent></Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {gefiltert.map((w) => { const frist = berechneFrist(w.kaufdatum); return (
+                <Card key={w.id} className="group cursor-pointer transition-shadow hover:shadow-md" onClick={() => onOpen(w.id)}><CardContent className="space-y-3 p-5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0"><p className="truncate font-medium">{w.bezeichnung || "Ohne Namen"}</p><p className="mt-0.5 text-xs text-muted-foreground">📍 {[w.plz, w.ort].filter(Boolean).join(" ") || "Keine Adresse"}</p></div>
+                    <Badge variant={varr[frist.status]}>{frist.status === "gruen" ? "frei" : frist.labelVerbleibend}</Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div><p className="text-xs text-muted-foreground">Wohnfläche</p><p>{w.wohnflaeche ? w.wohnflaeche + " m²" : "–"}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Kaltmiete</p><p>{formatEuro(w.miete.kaltmiete)}</p></div>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-border pt-3">
+                    <p className="truncate text-xs text-muted-foreground">Mieter: {w.mieter.name || "–"}</p>
+                    <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); setLoesch(w); }}>🗑️</Button>
+                  </div>
+                </CardContent></Card>
+              ); })}
+            </div>
+          )}
+          <Dialog open={neuOffen} onClose={() => setNeuOffen(false)} title="Neue Wohnung anlegen" description="Vergib einen Namen. Alle weiteren Daten erfasst du danach in den Reitern."
+            footer={<><Button variant="outline" onClick={() => setNeuOffen(false)}>Abbrechen</Button><Button onClick={anlegen}>Anlegen</Button></>}>
+            <Field label="Bezeichnung"><Input value={neuName} autoFocus onChange={(e) => setNeuName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && anlegen()} placeholder="z. B. Altbau Schwabing" /></Field>
+          </Dialog>
+          <Dialog open={!!loesch} onClose={() => setLoesch(null)} title="Wohnung löschen?" description={loesch ? `„${loesch.bezeichnung}" und alle zugehörigen Dokumente werden dauerhaft entfernt.` : ""}
+            footer={<><Button variant="outline" onClick={() => setLoesch(null)}>Abbrechen</Button><Button variant="destructive" onClick={async () => { await repo.deleteWohnung(loesch.id); setLoesch(null); reload(); }}>🗑️ Endgültig löschen</Button></>} />
+        </div>;
+      }
+
+      function App() {
+        const [view, setView] = useState({ name: "dashboard" });
+        const [wohnungen, setWohnungen] = useState(null);
+        const reload = useCallback(async () => setWohnungen(await repo.getWohnungen()), []);
+        useEffect(() => { reload(); }, [reload]);
+
+        const nav = (name) => setView({ name });
+        const open = (id) => setView({ name: "detail", id });
+
+        const NavBtn = ({ name, icon, label }) => <button onClick={() => nav(name)} className={cx("flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors", (view.name === name || (name === "wohnungen" && view.name === "detail")) ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground")}><span>{icon}</span>{label}</button>;
+
+        return <div className="flex min-h-screen flex-col md:flex-row">
+          <aside className="no-print hidden w-60 shrink-0 border-r border-border bg-card md:flex md:flex-col">
+            <div className="flex items-center gap-2 px-6 py-5"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-lg text-primary-foreground">🏢</div><div><p className="text-sm font-semibold leading-tight">Wohnungs­verwaltung</p><p className="text-xs text-muted-foreground">HTML-Tester</p></div></div>
+            <nav className="flex-1 space-y-1 px-3"><NavBtn name="dashboard" icon="📊" label="Dashboard" /><NavBtn name="wohnungen" icon="🏢" label="Wohnungen" /></nav>
+            <p className="px-6 py-4 text-xs text-muted-foreground">Lokale Speicherung · IndexedDB</p>
+          </aside>
+          <main className="flex-1 pb-20 md:pb-0"><div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+            {wohnungen == null ? <p className="text-sm text-muted-foreground">Lädt …</p>
+              : view.name === "dashboard" ? <Dashboard wohnungen={wohnungen} onOpen={open} />
+              : view.name === "wohnungen" ? <WohnungenList wohnungen={wohnungen} reload={reload} onOpen={open} />
+              : <WohnungDetail id={view.id} onBack={async () => { await reload(); nav("wohnungen"); }} />}
+          </div></main>
+          <nav className="no-print fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-card md:hidden">
+            <button onClick={() => nav("dashboard")} className={cx("flex flex-1 flex-col items-center gap-1 py-2.5 text-xs font-medium", view.name === "dashboard" ? "text-primary" : "text-muted-foreground")}><span>📊</span>Dashboard</button>
+            <button onClick={() => nav("wohnungen")} className={cx("flex flex-1 flex-col items-center gap-1 py-2.5 text-xs font-medium", view.name !== "dashboard" ? "text-primary" : "text-muted-foreground")}><span>🏢</span>Wohnungen</button>
+          </nav>
+        </div>;
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
