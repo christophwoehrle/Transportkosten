@@ -109,6 +109,22 @@ function restlaufzeitLabel(tage: number): string {
   return `noch ${tage} Tag${tage === 1 ? "" : "e"}`;
 }
 
+/** Google-Maps-Link aus der Adresse einer Wohnung (null, wenn keine Adresse). */
+export function googleMapsUrl(parts: {
+  strasse?: string;
+  plz?: string;
+  ort?: string;
+}): string | null {
+  const adresse = [parts.strasse, parts.plz, parts.ort]
+    .map((s) => (s || "").trim())
+    .filter(Boolean)
+    .join(", ");
+  if (!adresse) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    adresse
+  )}`;
+}
+
 /** Kleiner, kollisionsarmer ID-Generator. */
 export function uid(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {

@@ -16,6 +16,15 @@ export type DokumentKategorie =
   | "grundbuch"
   | "mietvertrag"
   | "hausverwaltung"
+  | "foto"
+  | "beleg"
+  | "sonstiges";
+
+export type ProtokollTyp =
+  | "reparatur"
+  | "wartung"
+  | "besichtigung"
+  | "schaden"
   | "sonstiges";
 
 export interface Ansprechpartner {
@@ -71,6 +80,39 @@ export interface BalkonTerrasse {
   anzahl: number | null;
 }
 
+export interface Mietminderung {
+  aktiv: boolean;
+  von: string; // ISO yyyy-mm-dd
+  bis: string; // ISO yyyy-mm-dd
+  betrag: number | null; // geminderte Miete (€ / Monat)
+}
+
+export interface ProtokollEintrag {
+  id: string;
+  typ: ProtokollTyp;
+  datum: string; // ISO yyyy-mm-dd – wann
+  beschreibung: string;
+  // durch wen (Handwerker / Kontakt)
+  kontaktName: string;
+  kontaktEmail: string;
+  kontaktTelefon: string;
+  behoben: boolean; // Problem behoben ja/nein
+  mietminderung: Mietminderung;
+  createdAt: number;
+}
+
+/** Kontobewegung aus der Banking-Schnittstelle (global, nicht pro Wohnung). */
+export interface BankTransaktion {
+  id: string;
+  datum: string; // ISO yyyy-mm-dd
+  betrag: number; // Eingang positiv, Ausgang negativ
+  verwendungszweck: string;
+  gegenpartei: string; // Name des Auftraggebers
+  iban: string;
+  quelle: "manuell" | "import" | "demo";
+  createdAt: number;
+}
+
 export interface Wohnung {
   id: string;
   // 1. Grunddaten
@@ -94,6 +136,7 @@ export interface Wohnung {
   mieter: Mieter;
   miete: Miete;
   nebenkosten: Nebenkosten;
+  protokoll: ProtokollEintrag[];
 
   createdAt: number;
   updatedAt: number;
@@ -103,6 +146,8 @@ export interface Dokument {
   id: string;
   wohnungId: string;
   kategorie: DokumentKategorie;
+  /** Optionale Verknüpfung, z. B. Beleg zu einem Protokolleintrag. */
+  protokollId?: string;
   titel: string;
   datum: string; // ISO yyyy-mm-dd
   mimeType: string;
@@ -137,5 +182,15 @@ export const DOKUMENT_KATEGORIEN: Record<DokumentKategorie, string> = {
   grundbuch: "Grundbuchauszug",
   mietvertrag: "Mietvertrag",
   hausverwaltung: "Hausverwaltungs-Abrechnung",
+  foto: "Foto",
+  beleg: "Beleg",
+  sonstiges: "Sonstiges",
+};
+
+export const PROTOKOLL_TYPEN: Record<ProtokollTyp, string> = {
+  reparatur: "Reparatur",
+  wartung: "Wartung",
+  besichtigung: "Besichtigung",
+  schaden: "Schaden",
   sonstiges: "Sonstiges",
 };

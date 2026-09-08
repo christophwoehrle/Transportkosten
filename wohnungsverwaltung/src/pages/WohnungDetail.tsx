@@ -4,11 +4,14 @@ import {
   ArrowLeft,
   Banknote,
   Check,
+  ClipboardList,
   FileText,
   Home,
+  Images,
   Landmark,
   Receipt,
   Users,
+  Wallet,
 } from "lucide-react";
 import type { Wohnung } from "@/types";
 import { repository } from "@/data/repository";
@@ -19,6 +22,9 @@ import { GrundbuchTab } from "./tabs/GrundbuchTab";
 import { MieterTab } from "./tabs/MieterTab";
 import { MieteTab } from "./tabs/MieteTab";
 import { HausverwaltungTab } from "./tabs/HausverwaltungTab";
+import { FotosTab } from "./tabs/FotosTab";
+import { ProtokollTab } from "./tabs/ProtokollTab";
+import { MieteingangTab } from "./tabs/MieteingangTab";
 
 export interface TabProps {
   wohnung: Wohnung;
@@ -27,11 +33,14 @@ export interface TabProps {
 
 const TABS = [
   { key: "grunddaten", label: "Grunddaten", icon: Home },
+  { key: "fotos", label: "Fotos", icon: Images },
   { key: "finanzierung", label: "Finanzierung", icon: Banknote },
   { key: "grundbuch", label: "Grundbuch & Notar", icon: Landmark },
   { key: "mieter", label: "Mieter", icon: Users },
   { key: "miete", label: "Miete & Nebenkosten", icon: Receipt },
+  { key: "mieteingang", label: "Mieteingang", icon: Wallet },
   { key: "hausverwaltung", label: "Hausverwaltung & NK", icon: FileText },
+  { key: "protokoll", label: "Protokoll", icon: ClipboardList },
 ];
 
 export function WohnungDetail() {
@@ -115,6 +124,9 @@ export function WohnungDetail() {
         <TabsContent value="grunddaten">
           <GrunddatenTab {...tabProps} />
         </TabsContent>
+        <TabsContent value="fotos">
+          <FotosTab {...tabProps} />
+        </TabsContent>
         <TabsContent value="finanzierung">
           <FinanzierungTab {...tabProps} />
         </TabsContent>
@@ -127,8 +139,14 @@ export function WohnungDetail() {
         <TabsContent value="miete">
           <MieteTab {...tabProps} />
         </TabsContent>
+        <TabsContent value="mieteingang">
+          <MieteingangTab {...tabProps} />
+        </TabsContent>
         <TabsContent value="hausverwaltung">
           <HausverwaltungTab {...tabProps} />
+        </TabsContent>
+        <TabsContent value="protokoll">
+          <ProtokollTab {...tabProps} />
         </TabsContent>
       </Tabs>
     </div>

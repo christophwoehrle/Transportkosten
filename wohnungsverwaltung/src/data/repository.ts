@@ -72,6 +72,7 @@ export function createLeereWohnung(): Wohnung {
     },
     miete: { kaltmiete: null, betriebskosten: null },
     nebenkosten: { zeitraumVon: "", zeitraumBis: "", posten: [] },
+    protokoll: [],
     createdAt: now,
     updatedAt: now,
   };

@@ -48,6 +48,7 @@ export function seedWohnungen(): Wohnung[] {
     },
     miete: { kaltmiete: null, betriebskosten: null },
     nebenkosten: { zeitraumVon: "", zeitraumBis: "", posten: [] },
+    protokoll: [],
     createdAt: now,
     updatedAt: now,
     ...over,
@@ -109,6 +110,20 @@ export function seedWohnungen(): Wohnung[] {
           { id: uid(), bezeichnung: "Instandhaltungsrücklage", betrag: 900, umlagefaehig: false },
         ],
       },
+      protokoll: [
+        {
+          id: uid(),
+          typ: "reparatur",
+          datum: "2025-07-14",
+          beschreibung: "Wespennest am Balkon entfernt.",
+          kontaktName: "Schädlingsbekämpfung Huber",
+          kontaktEmail: "info@huber-schaedling.example",
+          kontaktTelefon: "+49 89 4455667",
+          behoben: true,
+          mietminderung: { aktiv: false, von: "", bis: "", betrag: null },
+          createdAt: Date.now(),
+        },
+      ],
     }),
     base({
       bezeichnung: "Neubau am Park",

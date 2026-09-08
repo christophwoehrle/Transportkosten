@@ -46,22 +46,32 @@ CDN geladen und der Code per Babel direkt im Browser transpiliert – kein
   Fortschrittsbalken, Rest­laufzeit, Farbstatus (rot/gelb/grün), sortiert nach
   nächstem Fristende.
 - **Wohnungen** anlegen, bearbeiten, löschen; Karten­ansicht mit Suchfeld.
-- Pro Wohnung 6 Reiter:
-  1. **Grunddaten** – Adresse, Fläche, Zimmer, Ausstattung, Heizung, Kaufpreis/-datum.
-  2. **Finanzierung** – Bank, Zins/Tilgung/Laufzeit, Kreditvertragsnummer,
+- Pro Wohnung 9 Reiter:
+  1. **Grunddaten** – Adresse, Fläche, Zimmer, Ausstattung, Heizung, Kaufpreis/-datum;
+     **Google-Maps-Link** zur Immobilie (aus der Adresse).
+  2. **Fotos** – Fotoalbum mit Grundfotos (Upload **oder** Kamera-Aufnahme),
+     Vollbild-Vorschau, Löschen. Bilder als Blob in IndexedDB.
+  3. **Finanzierung** – Bank, Zins/Tilgung/Laufzeit, Kreditvertragsnummer,
      Ansprechpartner. Der Button *„E-Mail an Ansprechpartner"* setzt die
      **Kreditvertragsnummer automatisch in den Betreff** (`Darlehen Nr. …`) und ist
      ohne Nummer deaktiviert.
-  3. **Grundbuch & Notar** – Upload **und** Kamera-Scan (PDF/Bild), Vorschau,
+  4. **Grundbuch & Notar** – Upload **und** Kamera-Scan (PDF/Bild), Vorschau,
      Download, Löschen.
-  4. **Mieter** – Kontaktdaten mit E-Mail-/Telefon-Button, **IBAN/BIC mit
+  5. **Mieter** – Kontaktdaten mit E-Mail-/Telefon-Button, **IBAN/BIC mit
      Format-Validierung** (IBAN inkl. Modulo-97-Prüfsumme), Mietvertrag als Upload.
-  5. **Miete & Nebenkosten** – Kaltmiete + Betriebskosten­vorauszahlung,
+  6. **Miete & Nebenkosten** – Kaltmiete + Betriebskosten­vorauszahlung,
      **Warmmiete automatisch** berechnet, Monats-/Jahresübersicht.
-  6. **Hausverwaltung & NK-Abrechnung** – Abrechnungen hochladen/scannen; Kostenposten
+  7. **Mieteingang** – **Banking-Schnittstelle** zur Prüfung der Mieteingänge:
+     Kontobewegungen werden gegen die erwartete Warmmiete abgeglichen und je Monat
+     als *bezahlt / offen / ausstehend* angezeigt. Buchungen per CSV, aus Datei,
+     manuell oder als Demodaten. Gekapselt hinter `BankService` (siehe unten).
+  8. **Hausverwaltung & NK-Abrechnung** – Abrechnungen hochladen/scannen; Kostenposten
      erfassen, per **Checkbox** als umlagefähig markieren; die App verrechnet die
      umlagefähigen Kosten mit der Vorauszahlung und zeigt **Nachzahlung/Guthaben**.
      Ausgabe als **druck-/PDF-fähige** Ansicht (Button „Als PDF / Drucken").
+  9. **Protokoll** – Reparaturen/Wartungen/Schäden dokumentieren: Art, Datum,
+     Kontakt (Name/E-Mail/Telefon), **Beleg-Upload oder -Scan**, Status
+     *behoben ja/nein* sowie optionale **Mietminderung** (von/bis, geminderte Miete).
 
 ## Projektstruktur
 
@@ -81,9 +91,13 @@ wohnungsverwaltung/
    ├─ lib/
    │  ├─ utils.ts            # Formatierung, 10-Jahres-Frist, IDs
    │  └─ iban.ts             # IBAN-/BIC-Validierung
+   ├─ lib/
+   │  ├─ utils.ts            # + googleMapsUrl(), 10-Jahres-Frist
+   │  └─ mieteingang.ts      # Abgleich Kontobewegung ↔ erwartete Miete
    ├─ data/
-   │  ├─ db.ts               # Dexie/IndexedDB-Schema
+   │  ├─ db.ts               # Dexie/IndexedDB-Schema (v2: transaktionen)
    │  ├─ repository.ts       # >> Repository-Schicht (einziger Datenzugriff)
+   │  ├─ bankService.ts      # >> Banking-Schnittstelle (BankService)
    │  └─ seed.ts             # Musterdaten
    ├─ components/
    │  ├─ ui/                 # shadcn-artige UI-Bausteine (Button, Card, Tabs, …)
@@ -118,6 +132,20 @@ ergänzen, ohne die Oberfläche anzufassen:
 
 Optional lässt sich ein Sync-Layer bauen, der lokal (Dexie, offline) speichert und
 im Hintergrund mit der Cloud abgleicht – auch das berührt die UI nicht.
+
+### Banking-Schnittstelle (`BankService`)
+
+Analog dazu kapselt `src/data/bankService.ts` den Zugriff auf Kontobewegungen.
+Die mitgelieferte `LocalBankService`-Implementierung hält die Umsätze lokal und
+erlaubt CSV-/Datei-/Manuell-Import sowie Demodaten. Für eine echte Anbindung
+implementiert man dasselbe Interface erneut – z. B. `FinTsBankService`
+(HBCI/FinTS) oder `RestBankService` (Banking-API mit OAuth) – und tauscht die
+Instanz `bankService` aus. Der Abgleich Miete ↔ Umsatz (`src/lib/mieteingang.ts`)
+und die UI bleiben unverändert.
+
+**CSV-Format** (Trenner `;` oder `,`, deutsche oder englische Zahlen):
+`Datum;Betrag;Verwendungszweck;Gegenpartei;IBAN`. Spalten werden per Kopfzeile
+erkannt; ohne Kopfzeile gilt diese Reihenfolge.
 
 ## Technik
 

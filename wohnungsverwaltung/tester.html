@@ -121,7 +121,41 @@
 
       const AUSSTATTUNG = ["Einbauküche", "Keller", "Aufzug", "Stellplatz", "Garage", "Gäste-WC", "Fußbodenheizung", "Barrierefrei"];
       const HEIZUNGSARTEN = ["Gas", "Öl", "Fernwärme", "Wärmepumpe", "Nachtspeicher", "Pellets", "Sonstige"];
-      const DOK_KATEGORIEN = { notarvertrag: "Notarvertrag", grundbuch: "Grundbuchauszug", mietvertrag: "Mietvertrag", hausverwaltung: "Hausverwaltungs-Abrechnung", sonstiges: "Sonstiges" };
+      const DOK_KATEGORIEN = { notarvertrag: "Notarvertrag", grundbuch: "Grundbuchauszug", mietvertrag: "Mietvertrag", hausverwaltung: "Hausverwaltungs-Abrechnung", foto: "Foto", beleg: "Beleg", sonstiges: "Sonstiges" };
+      const PROTOKOLL_TYPEN = { reparatur: "Reparatur", wartung: "Wartung", besichtigung: "Besichtigung", schaden: "Schaden", sonstiges: "Sonstiges" };
+      const MONATE_KURZ = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+
+      function googleMapsUrl(w) {
+        const adr = [w.strasse, w.plz, w.ort].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+        return adr ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(adr) : null;
+      }
+
+      // --- Mieteingang-Abgleich (Spiegel von lib/mieteingang.ts) ---
+      function erwarteteMiete(w) {
+        const kalt = w.miete.kaltmiete || 0;
+        return { kalt, warm: kalt + (w.miete.betriebskosten || 0) };
+      }
+      function passtZurMiete(w, t) {
+        if (t.betrag <= 0) return false;
+        const { kalt, warm } = erwarteteMiete(w);
+        const betragOk = (warm > 0 && Math.abs(t.betrag - warm) <= 1) || (kalt > 0 && Math.abs(t.betrag - kalt) <= 1);
+        if (!betragOk) return false;
+        const ibanOk = !!w.mieter.iban && !!t.iban && normIban(w.mieter.iban) === normIban(t.iban);
+        const nachname = (w.mieter.name || "").trim().split(/\s+/).pop() || "";
+        const nameOk = nachname.length > 1 && (t.gegenpartei || "").toLowerCase().includes(nachname.toLowerCase());
+        return ibanOk || nameOk;
+      }
+      function mieteingangJahr(w, transaktionen, jahr, jetzt = new Date()) {
+        const { warm } = erwarteteMiete(w);
+        const passende = transaktionen.filter((t) => passtZurMiete(w, t));
+        const res = [];
+        for (let m = 0; m < 12; m++) {
+          const tx = passende.find((t) => { const d = new Date(t.datum); return d.getFullYear() === jahr && d.getMonth() === m; }) || null;
+          const status = tx ? "bezahlt" : (new Date(jahr, m, 1) > jetzt ? "ausstehend" : "offen");
+          res.push({ monat: m, jahr, soll: warm, transaktion: tx, status });
+        }
+        return res;
+      }
 
       /* ------------------------------------------------------------------ */
       /*  Datenzugriff: Repository-Schicht über Dexie (Spiegel von data/)   */
@@ -130,6 +164,11 @@
       db.version(1).stores({
         wohnungen: "id, bezeichnung, ort, kaufdatum, updatedAt",
         dokumente: "id, wohnungId, kategorie, datum, createdAt",
+      });
+      db.version(2).stores({
+        wohnungen: "id, bezeichnung, ort, kaufdatum, updatedAt",
+        dokumente: "id, wohnungId, kategorie, protokollId, datum, createdAt",
+        transaktionen: "id, datum, betrag, iban, createdAt",
       });
 
       function leereWohnung() {
@@ -142,6 +181,7 @@
           mieter: { name: "", strasse: "", plz: "", ort: "", telefon: "", email: "", iban: "", bic: "", einzugsdatum: "", auszugsdatum: "" },
           miete: { kaltmiete: null, betriebskosten: null },
           nebenkosten: { zeitraumVon: "", zeitraumBis: "", posten: [] },
+          protokoll: [],
           createdAt: now, updatedAt: now,
         };
       }
@@ -164,7 +204,10 @@
               { id: uid(), bezeichnung: "Hausreinigung", betrag: 420, umlagefaehig: true },
               { id: uid(), bezeichnung: "Verwaltergebühr", betrag: 300, umlagefaehig: false },
               { id: uid(), bezeichnung: "Instandhaltungsrücklage", betrag: 900, umlagefaehig: false },
-            ] } }),
+            ] },
+            protokoll: [{ id: uid(), typ: "reparatur", datum: "2025-07-14", beschreibung: "Wespennest am Balkon entfernt.",
+              kontaktName: "Schädlingsbekämpfung Huber", kontaktEmail: "info@huber-schaedling.example", kontaktTelefon: "+49 89 4455667",
+              behoben: true, mietminderung: { aktiv: false, von: "", bis: "", betrag: null }, createdAt: Date.now() }] }),
           base({ bezeichnung: "Neubau am Park", strasse: "Parkallee 7", plz: "60486", ort: "Frankfurt am Main",
             wohnflaeche: 64, zimmer: 2, baujahr: 2017, geschoss: "4. OG", ausstattungText: "Bodentiefe Fenster, Aufzug.",
             ausstattungFeatures: ["Einbauküche", "Aufzug", "Stellplatz", "Fußbodenheizung"], balkonTerrasse: { vorhanden: true, anzahl: 1 },
@@ -205,9 +248,80 @@
         async saveWohnung(w) { const t = Object.assign({}, w, { updatedAt: Date.now() }); await db.wohnungen.put(t); return t; },
         async deleteWohnung(id) { await db.transaction("rw", db.wohnungen, db.dokumente, async () => {
           await db.dokumente.where("wohnungId").equals(id).delete(); await db.wohnungen.delete(id); }); },
-        async getDokumente(wohnungId) { await this.ready(); return (await db.dokumente.where("wohnungId").equals(wohnungId).toArray()).sort((a, b) => b.createdAt - a.createdAt); },
+        async getDokumente(wohnungId, kategorie) { await this.ready(); let l = await db.dokumente.where("wohnungId").equals(wohnungId).toArray(); if (kategorie) l = l.filter((d) => d.kategorie === kategorie); return l.sort((a, b) => b.createdAt - a.createdAt); },
         async saveDokument(d) { await db.dokumente.put(d); return d; },
         async deleteDokument(id) { await db.dokumente.delete(id); },
+      };
+
+      // --- Banking-Schnittstelle (Spiegel von data/bankService.ts) ---
+      const MONATE_LANG = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+      function parseBetrag(s) {
+        const t = String(s).trim().replace(/\s/g, "").replace(/€/g, "");
+        if (!t) return null;
+        const norm = t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t;
+        const n = Number(norm);
+        return Number.isNaN(n) ? null : n;
+      }
+      function splitCsvLine(line, delim) {
+        const out = []; let cur = "", q = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+          else if (ch === delim && !q) { out.push(cur); cur = ""; }
+          else cur += ch;
+        }
+        out.push(cur); return out.map((s) => s.trim());
+      }
+      function normDatum(s) {
+        const t = String(s).trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+        const m = t.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+        if (m) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`; }
+        return t;
+      }
+      const bankService = {
+        async getTransaktionen() { return (await db.transaktionen.toArray()).sort((a, b) => (a.datum < b.datum ? 1 : -1)); },
+        async addTransaktion(t) { const n = Object.assign({}, t, { id: uid(), createdAt: Date.now() }); await db.transaktionen.put(n); return n; },
+        async deleteTransaktion(id) { await db.transaktionen.delete(id); },
+        async clearAll() { await db.transaktionen.clear(); },
+        async importCsv(text) {
+          const zeilen = text.split(/\r?\n/).map((z) => z.trim()).filter(Boolean);
+          if (!zeilen.length) return 0;
+          const delim = (zeilen[0].match(/;/g) || []).length >= (zeilen[0].match(/,/g) || []).length ? ";" : ",";
+          const header = splitCsvLine(zeilen[0], delim).map((h) => h.toLowerCase());
+          const idx = (ns) => header.findIndex((h) => ns.some((n) => h.includes(n)));
+          const iDatum = idx(["datum", "date", "buchung"]), iBetrag = idx(["betrag", "amount", "umsatz"]);
+          const iZweck = idx(["verwendung", "zweck", "purpose", "text"]), iName = idx(["gegen", "auftraggeber", "name", "empf", "beguen"]), iIban = idx(["iban", "konto"]);
+          const hatHeader = iDatum >= 0 && iBetrag >= 0;
+          const dz = hatHeader ? zeilen.slice(1) : zeilen;
+          const neu = [];
+          for (const z of dz) {
+            const f = splitCsvLine(z, delim);
+            const betrag = parseBetrag(hatHeader ? f[iBetrag] : f[1]);
+            if (betrag == null) continue;
+            neu.push({ id: uid(), datum: normDatum(hatHeader ? f[iDatum] : f[0]), betrag,
+              verwendungszweck: (hatHeader ? f[iZweck] : f[2]) || "", gegenpartei: (hatHeader ? f[iName] : f[3]) || "",
+              iban: (hatHeader ? f[iIban] : f[4]) || "", quelle: "import", createdAt: Date.now() });
+          }
+          if (neu.length) await db.transaktionen.bulkAdd(neu);
+          return neu.length;
+        },
+        async ladeDemodaten() {
+          const wohnungen = await db.wohnungen.toArray();
+          const jahr = new Date().getFullYear(), hm = new Date().getMonth(), neu = [];
+          wohnungen.forEach((w, wi) => {
+            const warm = (w.miete.kaltmiete || 0) + (w.miete.betriebskosten || 0);
+            if (!w.mieter.name || warm <= 0) return;
+            const auslassen = wi % 12;
+            for (let m = 0; m <= hm; m++) {
+              if (m === auslassen) continue;
+              neu.push({ id: uid(), datum: `${jahr}-${String(m + 1).padStart(2, "0")}-03`, betrag: warm,
+                verwendungszweck: `Miete ${MONATE_LANG[m]} ${jahr}`, gegenpartei: w.mieter.name, iban: w.mieter.iban || "", quelle: "demo", createdAt: Date.now() });
+            }
+          });
+          if (neu.length) await db.transaktionen.bulkAdd(neu);
+          return neu.length;
+        },
       };
 
       /* ------------------------------------------------------------------ */
@@ -286,7 +400,7 @@
       /* ------------------------------------------------------------------ */
       /*  Dokument-Upload + Kamera-Scan                                      */
       /* ------------------------------------------------------------------ */
-      function DocumentSection({ wohnungId, kategorien, standardKategorie, titel, beschreibung }) {
+      function DocumentSection({ wohnungId, kategorien, standardKategorie, titel, beschreibung, protokollId, kompakt }) {
         const [dokumente, setDokumente] = useState([]);
         const [kategorie, setKategorie] = useState(standardKategorie);
         const [previews, setPreviews] = useState({});
@@ -294,8 +408,8 @@
 
         const laden = useCallback(async () => {
           const alle = await repo.getDokumente(wohnungId);
-          setDokumente(alle.filter((d) => kategorien.includes(d.kategorie)));
-        }, [wohnungId]);
+          setDokumente(alle.filter((d) => kategorien.includes(d.kategorie) && (protokollId === undefined || d.protokollId === protokollId)));
+        }, [wohnungId, protokollId]);
         useEffect(() => { laden(); }, [laden]);
 
         useEffect(() => {
@@ -308,7 +422,7 @@
         async function handleFiles(files) {
           if (!files || !files.length) return;
           for (const file of Array.from(files)) {
-            await repo.saveDokument({ id: uid(), wohnungId, kategorie, titel: file.name || "Unbenannt",
+            await repo.saveDokument({ id: uid(), wohnungId, kategorie, protokollId, titel: file.name || "Unbenannt",
               datum: new Date().toISOString().slice(0, 10), mimeType: file.type || "application/octet-stream",
               size: file.size, blob: file, createdAt: Date.now() });
           }
@@ -321,9 +435,9 @@
           a.href = url; a.download = dok.titel; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
         }
 
-        return <div className="space-y-4">
+        return <div className={kompakt ? "space-y-3" : "space-y-4"}>
           <div>
-            <h3 className="text-base font-semibold">{titel}</h3>
+            <h3 className={kompakt ? "text-sm font-medium" : "text-base font-semibold"}>{titel}</h3>
             {beschreibung ? <p className="mt-1 text-sm text-muted-foreground">{beschreibung}</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -376,6 +490,9 @@
               <Field label="PLZ"><Input value={w.plz} onChange={(e) => update({ plz: e.target.value })} /></Field>
               <Field label="Ort"><Input value={w.ort} onChange={(e) => update({ ort: e.target.value })} /></Field>
             </Grid>
+            {googleMapsUrl(w)
+              ? <a href={googleMapsUrl(w)} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent">📍 Auf Google Maps öffnen</a>
+              : <p className="text-xs text-muted-foreground">Adresse eingeben, um einen Google-Maps-Link zu erhalten.</p>}
           </CardContent></Card>
           <Card><CardHeader><CardTitle>Merkmale</CardTitle></CardHeader><CardContent className="space-y-4">
             <Grid>
@@ -571,16 +688,199 @@
         </div>;
       }
 
+      function FotosTab({ w }) {
+        const [fotos, setFotos] = useState([]);
+        const [urls, setUrls] = useState({});
+        const [gross, setGross] = useState(null);
+        const fileInput = useRef(null), cameraInput = useRef(null);
+        const laden = useCallback(async () => setFotos(await repo.getDokumente(w.id, "foto")), [w.id]);
+        useEffect(() => { laden(); }, [laden]);
+        useEffect(() => {
+          const map = {}; fotos.forEach((f) => (map[f.id] = URL.createObjectURL(f.blob)));
+          setUrls(map); return () => Object.values(map).forEach(URL.revokeObjectURL);
+        }, [fotos]);
+        async function handleFiles(files) {
+          if (!files) return;
+          for (const file of Array.from(files)) {
+            if (!file.type.startsWith("image/")) continue;
+            await repo.saveDokument({ id: uid(), wohnungId: w.id, kategorie: "foto", titel: file.name || "Foto",
+              datum: new Date().toISOString().slice(0, 10), mimeType: file.type, size: file.size, blob: file, createdAt: Date.now() });
+          }
+          await laden();
+          if (fileInput.current) fileInput.current.value = "";
+          if (cameraInput.current) cameraInput.current.value = "";
+        }
+        return <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle>Fotoalbum</CardTitle>
+            <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => fileInput.current.click()}>⬆️ Hochladen</Button><Button variant="outline" size="sm" onClick={() => cameraInput.current.click()}>📷 Aufnehmen</Button></div>
+          </CardHeader>
+          <CardContent>
+            <input ref={fileInput} type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+            <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+            {fotos.length === 0
+              ? <p className="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Noch keine Fotos. Lade Grundfotos hoch oder nimm sie mit der Kamera auf.</p>
+              : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                  {fotos.map((f) => <div key={f.id} className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted">
+                    <img src={urls[f.id]} alt={f.titel} className="h-full w-full cursor-zoom-in object-cover" onClick={() => setGross(urls[f.id])} />
+                    <button onClick={async () => { await repo.deleteDokument(f.id); laden(); }} className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-md bg-black/50 text-white opacity-0 transition-opacity hover:bg-destructive group-hover:opacity-100">🗑️</button>
+                  </div>)}
+                </div>}
+            {gross ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setGross(null)}><img src={gross} alt="Vorschau" className="max-h-full max-w-full rounded-lg" /></div> : null}
+          </CardContent>
+        </Card>;
+      }
+
+      function ProtokollTab({ w, update }) {
+        const eintraege = w.protokoll;
+        const setE = (next) => update({ protokoll: next });
+        const upd = (id, p) => setE(eintraege.map((e) => (e.id === id ? Object.assign({}, e, p) : e)));
+        const add = () => setE([{ id: uid(), typ: "reparatur", datum: new Date().toISOString().slice(0, 10), beschreibung: "",
+          kontaktName: "", kontaktEmail: "", kontaktTelefon: "", behoben: false, mietminderung: { aktiv: false, von: "", bis: "", betrag: null }, createdAt: Date.now() }, ...eintraege]);
+        async function remove(id) {
+          const belege = await repo.getDokumente(w.id, "beleg");
+          await Promise.all(belege.filter((d) => d.protokollId === id).map((d) => repo.deleteDokument(d.id)));
+          setE(eintraege.filter((e) => e.id !== id));
+        }
+        return <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div><h2 className="text-lg font-semibold">Protokoll</h2><p className="text-sm text-muted-foreground">Reparaturen, Wartungen und Schäden dokumentieren – inkl. Belegen und eventueller Mietminderung.</p></div>
+            <Button onClick={add}>➕ Neuer Eintrag</Button>
+          </div>
+          {eintraege.length === 0
+            ? <Card><CardContent className="flex flex-col items-center gap-3 py-12 text-center"><div className="text-4xl">🔧</div><p className="text-sm text-muted-foreground">Noch keine Einträge. Lege z. B. eine Reparatur an.</p><Button onClick={add}>➕ Neuer Eintrag</Button></CardContent></Card>
+            : eintraege.map((e) => <Card key={e.id}>
+                <CardHeader className="flex-row items-start justify-between space-y-0">
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-base">{PROTOKOLL_TYPEN[e.typ]}</CardTitle>
+                    <Badge variant={e.behoben ? "success" : "warning"}>{e.behoben ? "behoben" : "offen"}</Badge>
+                    {e.mietminderung.aktiv ? <Badge variant="danger">Mietminderung</Badge> : null}
+                  </div>
+                  <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => remove(e.id)}>🗑️</Button>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Grid>
+                    <Field label="Art"><Select value={e.typ} onChange={(ev) => upd(e.id, { typ: ev.target.value })}>{Object.keys(PROTOKOLL_TYPEN).map((t) => <option key={t} value={t}>{PROTOKOLL_TYPEN[t]}</option>)}</Select></Field>
+                    <Field label="Wann"><Input type="date" value={e.datum} onChange={(ev) => upd(e.id, { datum: ev.target.value })} /></Field>
+                  </Grid>
+                  <Field label="Beschreibung"><Textarea value={e.beschreibung} onChange={(ev) => upd(e.id, { beschreibung: ev.target.value })} placeholder="z. B. Wespennest am Balkon muss entfernt werden." /></Field>
+                  <div>
+                    <p className="mb-2 text-sm font-medium">Durch wen (Kontakt)</p>
+                    <Grid>
+                      <Field label="Name"><Input value={e.kontaktName} onChange={(ev) => upd(e.id, { kontaktName: ev.target.value })} /></Field>
+                      <Field label="Telefon"><Input type="tel" value={e.kontaktTelefon} onChange={(ev) => upd(e.id, { kontaktTelefon: ev.target.value })} /></Field>
+                    </Grid>
+                    <div className="mt-4"><Field label="E-Mail"><Input type="email" value={e.kontaktEmail} onChange={(ev) => upd(e.id, { kontaktEmail: ev.target.value })} /></Field></div>
+                  </div>
+                  <div className="rounded-lg border border-border p-4">
+                    <DocumentSection wohnungId={w.id} protokollId={e.id} kategorien={["beleg"]} standardKategorie="beleg" titel="Belege" beschreibung="Rechnung/Beleg hochladen oder scannen." kompakt />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-6 border-t border-border pt-4">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Checkbox checked={e.behoben} onCheckedChange={(c) => upd(e.id, { behoben: c })} />Problem behoben</label>
+                    <label className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Checkbox checked={e.mietminderung.aktiv} onCheckedChange={(c) => upd(e.id, { mietminderung: Object.assign({}, e.mietminderung, { aktiv: c }) })} />Mietminderung</label>
+                  </div>
+                  {e.mietminderung.aktiv ? <div className="rounded-lg bg-muted p-4">
+                    <Grid>
+                      <Field label="Von"><Input type="date" value={e.mietminderung.von} onChange={(ev) => upd(e.id, { mietminderung: Object.assign({}, e.mietminderung, { von: ev.target.value }) })} /></Field>
+                      <Field label="Bis"><Input type="date" value={e.mietminderung.bis} onChange={(ev) => upd(e.id, { mietminderung: Object.assign({}, e.mietminderung, { bis: ev.target.value }) })} /></Field>
+                    </Grid>
+                    <div className="mt-4"><Field label="Geminderte Miete (€ / Monat)" hint={w.miete.kaltmiete != null ? "Reguläre Kaltmiete: " + formatEuro(w.miete.kaltmiete) : undefined}><NumberInput value={e.mietminderung.betrag} onValueChange={(v) => upd(e.id, { mietminderung: Object.assign({}, e.mietminderung, { betrag: v }) })} /></Field></div>
+                    <p className="mt-3 text-xs text-muted-foreground">Mietminderung {formatDate(e.mietminderung.von)} – {formatDate(e.mietminderung.bis)} auf {formatEuro(e.mietminderung.betrag)} / Monat.</p>
+                  </div> : null}
+                </CardContent>
+              </Card>)}
+        </div>;
+      }
+
+      function MieteingangTab({ w }) {
+        const [transaktionen, setTransaktionen] = useState([]);
+        const [jahr, setJahr] = useState(new Date().getFullYear());
+        const [importOffen, setImportOffen] = useState(false);
+        const [csv, setCsv] = useState("");
+        const [neu, setNeu] = useState({ datum: "", betrag: "", zweck: "" });
+        const [meldung, setMeldung] = useState(null);
+        const fileInput = useRef(null);
+        const laden = useCallback(async () => setTransaktionen(await bankService.getTransaktionen()), []);
+        useEffect(() => { laden(); }, [laden]);
+        const monate = useMemo(() => mieteingangJahr(w, transaktionen, jahr), [w, transaktionen, jahr]);
+        const warm = erwarteteMiete(w).warm;
+        const bezahlt = monate.filter((m) => m.status === "bezahlt").length;
+        const offen = monate.filter((m) => m.status === "offen").length;
+        const SB = { bezahlt: ["success", "bezahlt"], offen: ["danger", "offen"], ausstehend: ["secondary", "ausstehend"] };
+        const zugeordnet = useMemo(() => { const ids = new Set(monate.map((m) => m.transaktion && m.transaktion.id).filter(Boolean)); return transaktionen.filter((t) => ids.has(t.id)); }, [monate, transaktionen]);
+        async function demodaten() { const n = await bankService.ladeDemodaten(); await laden(); setMeldung(n + " Demo-Buchungen geladen."); }
+        async function importieren() { const n = await bankService.importCsv(csv); await laden(); setImportOffen(false); setCsv(""); setMeldung(n + " Buchungen importiert."); }
+        async function datei(files) { if (!files || !files[0]) return; const n = await bankService.importCsv(await files[0].text()); await laden(); setMeldung(n + " Buchungen aus Datei importiert."); if (fileInput.current) fileInput.current.value = ""; }
+        async function manuell() { const b = parseNumber(neu.betrag); if (b == null || !neu.datum) return; await bankService.addTransaktion({ datum: neu.datum, betrag: b, verwendungszweck: neu.zweck, gegenpartei: w.mieter.name, iban: w.mieter.iban, quelle: "manuell" }); setNeu({ datum: "", betrag: "", zweck: "" }); await laden(); }
+        return <div className="space-y-6">
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle>💶 Mieteingang prüfen</CardTitle>
+              <div className="flex items-center gap-2"><Button variant="ghost" size="icon" onClick={() => setJahr((j) => j - 1)}>‹</Button><span className="w-14 text-center text-sm font-medium">{jahr}</span><Button variant="ghost" size="icon" onClick={() => setJahr((j) => j + 1)}>›</Button></div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-3 text-sm"><span className="text-muted-foreground">Erwartete Warmmiete: <b className="text-foreground">{formatEuro(warm)}</b> / Monat</span><span className="text-muted-foreground">·</span><span className="text-emerald-700">{bezahlt} bezahlt</span><span className="text-rose-700">{offen} offen</span></div>
+              {warm <= 0 ? <p className="rounded-md bg-amber-50 p-3 text-xs text-amber-800">Keine Kaltmiete hinterlegt – der Abgleich benötigt die Miete aus dem Reiter „Miete & Nebenkosten".</p> : null}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                {monate.map((m) => <div key={m.monat} className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between"><span className="text-sm font-medium">{MONATE_KURZ[m.monat]}</span><Badge variant={SB[m.status][0]}>{SB[m.status][1]}</Badge></div>
+                  <p className="mt-1 text-xs text-muted-foreground">Soll: {formatEuro(m.soll)}</p>
+                  <p className="text-xs text-muted-foreground">{m.transaktion ? "Ist: " + formatEuro(m.transaktion.betrag) + " · " + formatDate(m.transaktion.datum) : (m.status === "ausstehend" ? "noch nicht fällig" : "kein Eingang")}</p>
+                </div>)}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Banking-Schnittstelle</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">Kontobewegungen werden lokal gehalten und gegen die erwartete Miete abgeglichen. Import als CSV, aus Datei oder manuell; eine echte Bank-Anbindung (FinTS/HBCI oder Banking-API) lässt sich über die <code className="mx-1 rounded bg-muted px-1">BankService</code>-Schnittstelle ergänzen.</p>
+              {meldung ? <p className="flex items-center gap-2 rounded-md bg-emerald-50 p-2 text-xs text-emerald-800">✓ {meldung}</p> : null}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={demodaten}>🔄 Demodaten laden</Button>
+                <Button variant="outline" size="sm" onClick={() => setImportOffen((v) => !v)}>⬆️ CSV einfügen</Button>
+                <Button variant="outline" size="sm" onClick={() => fileInput.current.click()}>⬆️ CSV-Datei</Button>
+                <input ref={fileInput} type="file" accept=".csv,text/csv,text/plain" className="hidden" onChange={(e) => datei(e.target.files)} />
+                {transaktionen.length > 0 ? <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={async () => { await bankService.clearAll(); await laden(); }}>🗑️ Alle löschen</Button> : null}
+              </div>
+              {importOffen ? <div className="space-y-2">
+                <textarea value={csv} onChange={(e) => setCsv(e.target.value)} placeholder={"Datum;Betrag;Verwendungszweck;Gegenpartei;IBAN\n03.01.2026;1400,00;Miete Januar;Julia Sommer;DE89370400440532013000"} className="h-28 w-full rounded-md border border-input bg-background p-2 font-mono text-xs" />
+                <div className="flex gap-2"><Button size="sm" onClick={importieren} disabled={!csv.trim()}>Importieren</Button><Button size="sm" variant="ghost" onClick={() => setImportOffen(false)}>✕ Abbrechen</Button></div>
+              </div> : null}
+              <div className="rounded-lg border border-dashed border-border p-4">
+                <p className="mb-3 text-sm font-medium">Buchung manuell erfassen</p>
+                <Grid>
+                  <Field label="Datum"><Input type="date" value={neu.datum} onChange={(e) => setNeu(Object.assign({}, neu, { datum: e.target.value }))} /></Field>
+                  <Field label="Betrag (€)"><NumberInput value={parseNumber(neu.betrag)} onValueChange={(v) => setNeu(Object.assign({}, neu, { betrag: v == null ? "" : String(v).replace(".", ",") }))} /></Field>
+                </Grid>
+                <div className="mt-4"><Field label="Verwendungszweck"><Input value={neu.zweck} onChange={(e) => setNeu(Object.assign({}, neu, { zweck: e.target.value }))} placeholder="z. B. Miete" /></Field></div>
+                <Button size="sm" className="mt-3" onClick={manuell} disabled={!neu.datum || parseNumber(neu.betrag) == null}>➕ Hinzufügen (Mieter {w.mieter.name || "?"})</Button>
+              </div>
+              {zugeordnet.length > 0 ? <div>
+                <p className="mb-2 text-sm font-medium">Zugeordnete Eingänge {jahr} ({zugeordnet.length})</p>
+                <div className="divide-y divide-border rounded-lg border border-border">
+                  {zugeordnet.map((t) => <div key={t.id} className="flex items-center justify-between p-2.5 text-sm">
+                    <div><p className="font-medium">{formatEuro(t.betrag)}</p><p className="text-xs text-muted-foreground">{formatDate(t.datum)} · {t.verwendungszweck || t.gegenpartei || "–"}{t.quelle === "demo" ? " · Demo" : ""}</p></div>
+                    <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={async () => { await bankService.deleteTransaktion(t.id); laden(); }}>🗑️</Button>
+                  </div>)}
+                </div>
+              </div> : null}
+            </CardContent>
+          </Card>
+        </div>;
+      }
+
       /* ------------------------------------------------------------------ */
       /*  Seiten                                                             */
       /* ------------------------------------------------------------------ */
       const TABS = [
         { key: "grunddaten", label: "Grunddaten", icon: "🏠", C: GrunddatenTab },
+        { key: "fotos", label: "Fotos", icon: "🖼️", C: FotosTab },
         { key: "finanzierung", label: "Finanzierung", icon: "💶", C: FinanzierungTab },
         { key: "grundbuch", label: "Grundbuch & Notar", icon: "🏛️", C: null },
         { key: "mieter", label: "Mieter", icon: "👥", C: MieterTab },
         { key: "miete", label: "Miete & Nebenkosten", icon: "🧾", C: MieteTab },
+        { key: "mieteingang", label: "Mieteingang", icon: "🏦", C: MieteingangTab },
         { key: "hausverwaltung", label: "Hausverwaltung & NK", icon: "📄", C: HausverwaltungTab },
+        { key: "protokoll", label: "Protokoll", icon: "📋", C: ProtokollTab },
       ];
 
       function WohnungDetail({ id, onBack }) {

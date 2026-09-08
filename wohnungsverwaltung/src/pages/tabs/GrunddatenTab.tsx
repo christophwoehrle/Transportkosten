@@ -1,5 +1,7 @@
+import { MapPin } from "lucide-react";
 import type { TabProps } from "../WohnungDetail";
 import { AUSSTATTUNG_OPTIONEN, HEIZUNGSARTEN, type Heizungsart } from "@/types";
+import { googleMapsUrl } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,6 +11,8 @@ import { NumberInput } from "@/components/NumberInput";
 import { Field, FieldGrid } from "@/components/Field";
 
 export function GrunddatenTab({ wohnung, update }: TabProps) {
+  const mapsUrl = googleMapsUrl(wohnung);
+
   function toggleFeature(feature: string) {
     const has = wohnung.ausstattungFeatures.includes(feature);
     update({
@@ -52,6 +56,20 @@ export function GrunddatenTab({ wohnung, update }: TabProps) {
               />
             </Field>
           </FieldGrid>
+          {mapsUrl ? (
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent"
+            >
+              <MapPin className="h-4 w-4" /> Auf Google Maps öffnen
+            </a>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Adresse eingeben, um einen Google-Maps-Link zu erhalten.
+            </p>
+          )}
         </CardContent>
       </Card>
 

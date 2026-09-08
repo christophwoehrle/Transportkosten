@@ -22,6 +22,10 @@ interface Props {
   standardKategorie: DokumentKategorie;
   titel: string;
   beschreibung?: string;
+  /** Optional: nur Dokumente dieses Protokolleintrags anzeigen/speichern. */
+  protokollId?: string;
+  /** Kompakter (z. B. innerhalb eines Protokolleintrags). */
+  kompakt?: boolean;
 }
 
 /**
@@ -35,6 +39,8 @@ export function DocumentSection({
   standardKategorie,
   titel,
   beschreibung,
+  protokollId,
+  kompakt,
 }: Props) {
   const [dokumente, setDokumente] = React.useState<Dokument[]>([]);
   const [kategorie, setKategorie] =
@@ -45,9 +51,14 @@ export function DocumentSection({
 
   const laden = React.useCallback(async () => {
     const alle = await repository.getDokumente(wohnungId);
-    const gefiltert = alle.filter((d) => kategorien.includes(d.kategorie));
+    const gefiltert = alle.filter(
+      (d) =>
+        kategorien.includes(d.kategorie) &&
+        (protokollId === undefined || d.protokollId === protokollId)
+    );
     setDokumente(gefiltert);
-  }, [wohnungId, kategorien]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wohnungId, kategorien.join(","), protokollId]);
 
   React.useEffect(() => {
     laden();
@@ -72,6 +83,7 @@ export function DocumentSection({
         id: uid(),
         wohnungId,
         kategorie,
+        protokollId,
         titel: file.name || "Unbenannt",
         datum: new Date().toISOString().slice(0, 10),
         mimeType: file.type || "application/octet-stream",
@@ -108,9 +120,11 @@ export function DocumentSection({
   }
 
   return (
-    <div className="space-y-4">
+    <div className={kompakt ? "space-y-3" : "space-y-4"}>
       <div>
-        <h3 className="text-base font-semibold">{titel}</h3>
+        <h3 className={kompakt ? "text-sm font-medium" : "text-base font-semibold"}>
+          {titel}
+        </h3>
         {beschreibung && (
           <p className="mt-1 text-sm text-muted-foreground">{beschreibung}</p>
         )}
