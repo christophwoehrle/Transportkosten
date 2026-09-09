@@ -101,6 +101,13 @@ export interface ProtokollEintrag {
   createdAt: number;
 }
 
+export type TransaktionsArt =
+  | "miete"
+  | "sonstige_einnahme"
+  | "hausverwaltung"
+  | "grundsteuer"
+  | "sonstige_ausgabe";
+
 /** Kontobewegung aus der Banking-Schnittstelle (global, nicht pro Wohnung). */
 export interface BankTransaktion {
   id: string;
@@ -109,6 +116,9 @@ export interface BankTransaktion {
   verwendungszweck: string;
   gegenpartei: string; // Name des Auftraggebers
   iban: string;
+  art: TransaktionsArt;
+  /** Optionale feste Zuordnung zu einer Wohnung (z. B. bei Ausgaben). */
+  wohnungId?: string;
   quelle: "manuell" | "import" | "demo";
   createdAt: number;
 }
@@ -194,3 +204,16 @@ export const PROTOKOLL_TYPEN: Record<ProtokollTyp, string> = {
   schaden: "Schaden",
   sonstiges: "Sonstiges",
 };
+
+export const TRANSAKTION_ART: Record<TransaktionsArt, string> = {
+  miete: "Mieteingang",
+  sonstige_einnahme: "Sonstige Einnahme",
+  hausverwaltung: "Hausverwaltung",
+  grundsteuer: "Grundsteuer",
+  sonstige_ausgabe: "Sonstige Ausgabe",
+};
+
+/** Ist die Art eine Einnahme (positiver Betrag)? */
+export function istEinnahme(art: TransaktionsArt): boolean {
+  return art === "miete" || art === "sonstige_einnahme";
+}

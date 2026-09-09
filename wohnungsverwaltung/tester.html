@@ -156,6 +156,46 @@
         }
         return res;
       }
+      function mieteStatusKompakt(w, transaktionen, jahr, jetzt = new Date()) {
+        const warm = erwarteteMiete(w).warm;
+        const monate = mieteingangJahr(w, transaktionen, jahr, jetzt);
+        return { aktuell: monate.filter((m) => m.status === "offen").length === 0,
+          bezahlt: monate.filter((m) => m.status === "bezahlt").length,
+          offen: monate.filter((m) => m.status === "offen").length, hatMiete: warm > 0 };
+      }
+
+      // --- Rentabilität (Spiegel von lib/rentabilitaet.ts) ---
+      const TRANSAKTION_ART = { miete: "Mieteingang", sonstige_einnahme: "Sonstige Einnahme", hausverwaltung: "Hausverwaltung", grundsteuer: "Grundsteuer", sonstige_ausgabe: "Sonstige Ausgabe" };
+      const istEinnahme = (art) => art === "miete" || art === "sonstige_einnahme";
+      function gehoertZuWohnung(w, t) { return t.wohnungId ? t.wohnungId === w.id : passtZurMiete(w, t); }
+      function rentabilitaet(w, transaktionen, jahr) {
+        const zug = transaktionen.filter((t) => gehoertZuWohnung(w, t) && new Date(t.datum).getFullYear() === jahr);
+        let einnahmen = 0, miete = 0, sonstigeEinnahme = 0;
+        const aus = { hausverwaltung: 0, grundsteuer: 0, sonstige_ausgabe: 0 };
+        const perMonat = Array.from({ length: 12 }, () => ({ einnahmen: 0, ausgaben: 0 }));
+        for (const t of zug) {
+          const m = new Date(t.datum).getMonth();
+          if (t.betrag >= 0) { einnahmen += t.betrag; perMonat[m].einnahmen += t.betrag; if (t.art === "sonstige_einnahme") sonstigeEinnahme += t.betrag; else miete += t.betrag; }
+          else { const a = Math.abs(t.betrag); perMonat[m].ausgaben += a; if (t.art === "hausverwaltung") aus.hausverwaltung += a; else if (t.art === "grundsteuer") aus.grundsteuer += a; else aus.sonstige_ausgabe += a; }
+        }
+        const ausgaben = aus.hausverwaltung + aus.grundsteuer + aus.sonstige_ausgabe;
+        const saldo = einnahmen - ausgaben;
+        return { jahr, einnahmen, miete, sonstigeEinnahme, ausgaben, ausgabenNachArt: aus, saldo, rendite: einnahmen > 0 ? saldo / einnahmen : null, perMonat, anzahl: zug.length };
+      }
+      function erwarteteKosten(w) {
+        const p = w.nebenkosten.posten;
+        const find = (kw) => p.find((x) => (x.bezeichnung || "").toLowerCase().includes(kw));
+        const hv = find("verwalt"), gs = find("grundsteuer");
+        return { hausverwaltungJahr: hv ? hv.betrag : null, grundsteuerJahr: gs ? gs.betrag : null };
+      }
+      function abgangStatus(ist, erwartetProJahr, jahr, jetzt = new Date()) {
+        if (erwartetProJahr == null || erwartetProJahr <= 0) return { status: "unbekannt", soll: 0 };
+        const anteil = jetzt.getFullYear() > jahr ? 1 : (jetzt.getFullYear() < jahr ? 0 : (jetzt.getMonth() + 1) / 12);
+        const soll = erwartetProJahr * anteil;
+        let status;
+        if (soll <= 0 || ist >= soll - 1) status = "aktuell"; else if (ist > 0) status = "teilweise"; else status = "offen";
+        return { status, soll };
+      }
 
       /* ------------------------------------------------------------------ */
       /*  Datenzugriff: Repository-Schicht über Dexie (Spiegel von data/)   */
@@ -301,7 +341,7 @@
             if (betrag == null) continue;
             neu.push({ id: uid(), datum: normDatum(hatHeader ? f[iDatum] : f[0]), betrag,
               verwendungszweck: (hatHeader ? f[iZweck] : f[2]) || "", gegenpartei: (hatHeader ? f[iName] : f[3]) || "",
-              iban: (hatHeader ? f[iIban] : f[4]) || "", quelle: "import", createdAt: Date.now() });
+              iban: (hatHeader ? f[iIban] : f[4]) || "", art: betrag >= 0 ? "miete" : "sonstige_ausgabe", quelle: "import", createdAt: Date.now() });
           }
           if (neu.length) await db.transaktionen.bulkAdd(neu);
           return neu.length;
@@ -311,12 +351,22 @@
           const jahr = new Date().getFullYear(), hm = new Date().getMonth(), neu = [];
           wohnungen.forEach((w, wi) => {
             const warm = (w.miete.kaltmiete || 0) + (w.miete.betriebskosten || 0);
-            if (!w.mieter.name || warm <= 0) return;
+            const kosten = erwarteteKosten(w);
             const auslassen = wi % 12;
             for (let m = 0; m <= hm; m++) {
-              if (m === auslassen) continue;
-              neu.push({ id: uid(), datum: `${jahr}-${String(m + 1).padStart(2, "0")}-03`, betrag: warm,
-                verwendungszweck: `Miete ${MONATE_LANG[m]} ${jahr}`, gegenpartei: w.mieter.name, iban: w.mieter.iban || "", quelle: "demo", createdAt: Date.now() });
+              const mm = String(m + 1).padStart(2, "0");
+              if (w.mieter.name && warm > 0 && m !== auslassen)
+                neu.push({ id: uid(), datum: `${jahr}-${mm}-03`, betrag: warm, verwendungszweck: `Miete ${MONATE_LANG[m]} ${jahr}`,
+                  gegenpartei: w.mieter.name, iban: w.mieter.iban || "", art: "miete", wohnungId: w.id, quelle: "demo", createdAt: Date.now() });
+              if (kosten.hausverwaltungJahr && kosten.hausverwaltungJahr > 0)
+                neu.push({ id: uid(), datum: `${jahr}-${mm}-28`, betrag: -Math.round((kosten.hausverwaltungJahr / 12) * 100) / 100,
+                  verwendungszweck: `Hausverwaltung ${MONATE_LANG[m]} ${jahr}`, gegenpartei: "Hausverwaltung", iban: "", art: "hausverwaltung", wohnungId: w.id, quelle: "demo", createdAt: Date.now() });
+            }
+            if (kosten.grundsteuerJahr && kosten.grundsteuerJahr > 0) {
+              const rate = Math.round((kosten.grundsteuerJahr / 4) * 100) / 100;
+              [1, 4, 7, 10].forEach((mon) => { if (mon <= hm)
+                neu.push({ id: uid(), datum: `${jahr}-${String(mon + 1).padStart(2, "0")}-15`, betrag: -rate,
+                  verwendungszweck: `Grundsteuer Q${Math.floor(mon / 3) + 1} ${jahr}`, gegenpartei: "Finanzamt / Gemeinde", iban: "", art: "grundsteuer", wohnungId: w.id, quelle: "demo", createdAt: Date.now() }); });
             }
           });
           if (neu.length) await db.transaktionen.bulkAdd(neu);
@@ -810,7 +860,7 @@
         async function demodaten() { const n = await bankService.ladeDemodaten(); await laden(); setMeldung(n + " Demo-Buchungen geladen."); }
         async function importieren() { const n = await bankService.importCsv(csv); await laden(); setImportOffen(false); setCsv(""); setMeldung(n + " Buchungen importiert."); }
         async function datei(files) { if (!files || !files[0]) return; const n = await bankService.importCsv(await files[0].text()); await laden(); setMeldung(n + " Buchungen aus Datei importiert."); if (fileInput.current) fileInput.current.value = ""; }
-        async function manuell() { const b = parseNumber(neu.betrag); if (b == null || !neu.datum) return; await bankService.addTransaktion({ datum: neu.datum, betrag: b, verwendungszweck: neu.zweck, gegenpartei: w.mieter.name, iban: w.mieter.iban, quelle: "manuell" }); setNeu({ datum: "", betrag: "", zweck: "" }); await laden(); }
+        async function manuell() { const b = parseNumber(neu.betrag); if (b == null || !neu.datum) return; await bankService.addTransaktion({ datum: neu.datum, betrag: b, verwendungszweck: neu.zweck, gegenpartei: w.mieter.name, iban: w.mieter.iban, art: "miete", wohnungId: w.id, quelle: "manuell" }); setNeu({ datum: "", betrag: "", zweck: "" }); await laden(); }
         return <div className="space-y-6">
           <Card>
             <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -868,6 +918,121 @@
         </div>;
       }
 
+      const RENTA_STATUS = { aktuell: ["success", "aktuell"], teilweise: ["warning", "teilweise"], offen: ["danger", "offen"], unbekannt: ["secondary", "kein Sollwert"] };
+      function Legende({ farbe, text }) { return <span className="inline-flex items-center gap-1.5"><span className={"inline-block h-2.5 w-2.5 rounded-sm " + farbe} />{text}</span>; }
+      function CashflowChart({ perMonat }) {
+        const W = 720, H = 200, padL = 44, padR = 8, padT = 10, padB = 22;
+        const innerW = W - padL - padR, innerH = H - padT - padB;
+        const max = Math.max(1, ...perMonat.map((m) => Math.max(m.einnahmen, m.ausgaben)));
+        const groupW = innerW / 12, barW = Math.min(10, groupW / 2 - 2);
+        const y = (v) => padT + innerH - (v / max) * innerH;
+        return <div className="w-full overflow-x-auto"><svg viewBox={`0 0 ${W} ${H}`} className="h-52 w-full min-w-[520px]" role="img" aria-label="Monatlicher Cashflow">
+          {[0, max / 2, max].map((gv, i) => <g key={i}>
+            <line x1={padL} x2={W - padR} y1={y(gv)} y2={y(gv)} stroke="currentColor" className="text-border" strokeWidth={1} />
+            <text x={padL - 6} y={y(gv) + 3} textAnchor="end" className="fill-muted-foreground" fontSize={9}>{Math.round(gv)}</text>
+          </g>)}
+          {perMonat.map((m, i) => { const gx = padL + i * groupW + groupW / 2; return <g key={i}>
+            <rect x={gx - barW - 1} y={y(m.einnahmen)} width={barW} height={padT + innerH - y(m.einnahmen)} className="fill-emerald-500" rx={1}><title>{MONATE_KURZ[i] + ": Einnahmen " + formatEuro(m.einnahmen)}</title></rect>
+            <rect x={gx + 1} y={y(m.ausgaben)} width={barW} height={padT + innerH - y(m.ausgaben)} className="fill-rose-500" rx={1}><title>{MONATE_KURZ[i] + ": Ausgaben " + formatEuro(m.ausgaben)}</title></rect>
+            <text x={gx} y={H - 6} textAnchor="middle" className="fill-muted-foreground" fontSize={9}>{MONATE_KURZ[i]}</text>
+          </g>; })}
+        </svg></div>;
+      }
+      function RentabilitaetTab({ w }) {
+        const [transaktionen, setTransaktionen] = useState([]);
+        const [jahr, setJahr] = useState(new Date().getFullYear());
+        const [neu, setNeu] = useState({ art: "hausverwaltung", datum: "", betrag: "", zweck: "" });
+        const laden = useCallback(async () => setTransaktionen(await bankService.getTransaktionen()), []);
+        useEffect(() => { laden(); }, [laden]);
+        const r = useMemo(() => rentabilitaet(w, transaktionen, jahr), [w, transaktionen, jahr]);
+        const kosten = erwarteteKosten(w);
+        const hv = abgangStatus(r.ausgabenNachArt.hausverwaltung, kosten.hausverwaltungJahr, jahr);
+        const gs = abgangStatus(r.ausgabenNachArt.grundsteuer, kosten.grundsteuerJahr, jahr);
+        const eigene = useMemo(() => transaktionen.filter((t) => gehoertZuWohnung(w, t) && new Date(t.datum).getFullYear() === jahr).sort((a, b) => (a.datum < b.datum ? 1 : -1)), [transaktionen, w, jahr]);
+        const ausMax = Math.max(r.einnahmen, r.ausgaben, 1);
+        async function buchen() { const b = parseNumber(neu.betrag); if (b == null || !neu.datum) return; const s = istEinnahme(neu.art) ? Math.abs(b) : -Math.abs(b);
+          await bankService.addTransaktion({ datum: neu.datum, betrag: s, verwendungszweck: neu.zweck || TRANSAKTION_ART[neu.art], gegenpartei: istEinnahme(neu.art) ? w.mieter.name : TRANSAKTION_ART[neu.art], iban: neu.art === "miete" ? w.mieter.iban : "", art: neu.art, wohnungId: w.id, quelle: "manuell" });
+          setNeu(Object.assign({}, neu, { datum: "", betrag: "", zweck: "" })); await laden(); }
+        const Kpi = ({ label, value, tone, betont, rendite }) => <div className={"rounded-lg border border-border p-4 " + (betont ? "bg-muted" : "")}>
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground"><span>{tone === "pos" ? "📈" : "📉"}</span>{label}</div>
+          <p className={"mt-1 text-2xl font-semibold " + (betont ? (tone === "pos" ? "text-emerald-700" : "text-rose-700") : "text-foreground")}>{value}</p>
+          {rendite != null ? <p className="text-xs text-muted-foreground">Rendite (Saldo/Einnahmen): {(rendite * 100).toFixed(0)} %</p> : null}
+        </div>;
+        const Abgang = ({ titel, ist, st, erwartetJahr }) => <div className="rounded-lg border border-border p-4">
+          <div className="flex items-center justify-between"><p className="text-sm font-medium">{titel}</p><Badge variant={RENTA_STATUS[st.status][0]}>{RENTA_STATUS[st.status][1]}</Badge></div>
+          <p className="mt-2 text-lg font-semibold">{formatEuro(ist)}</p>
+          <p className="text-xs text-muted-foreground">{erwartetJahr != null ? "Soll bis heute: " + formatEuro(st.soll) + " · erwartet/Jahr: " + formatEuro(erwartetJahr) : "Kein Sollwert (NK-Posten fehlt)"}</p>
+        </div>;
+        const seg = (v, total, cls, title) => (v > 0 && total > 0) ? <div className={"h-full " + cls} style={{ width: (v / total) * 100 + "%" }} title={title + ": " + formatEuro(v)} /> : null;
+        return <div className="space-y-6">
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle>Rentabilität – Einnahmen / Ausgaben</CardTitle>
+              <div className="flex items-center gap-2"><Button variant="ghost" size="icon" onClick={() => setJahr((j) => j - 1)}>‹</Button><span className="w-14 text-center text-sm font-medium">{jahr}</span><Button variant="ghost" size="icon" onClick={() => setJahr((j) => j + 1)}>›</Button></div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Kpi label="Einnahmen" value={formatEuro(r.einnahmen)} tone="pos" />
+                <Kpi label="Ausgaben" value={formatEuro(r.ausgaben)} tone="neg" />
+                <Kpi label="Saldo (Cashflow)" value={formatEuro(r.saldo)} tone={r.saldo >= 0 ? "pos" : "neg"} betont rendite={r.rendite} />
+              </div>
+              {r.anzahl === 0 ? <p className="rounded-md bg-amber-50 p-3 text-xs text-amber-800">Für {jahr} sind keine Kontobewegungen zugeordnet. Buchungen unten erfassen oder im Reiter „Mieteingang" Demodaten laden.</p> : null}
+              <div className="space-y-3">
+                <div>
+                  <div className="mb-1 flex justify-between text-xs"><span className="text-muted-foreground">Einnahmen</span><span className="font-medium">{formatEuro(r.einnahmen)}</span></div>
+                  <div className="h-6 w-full overflow-hidden rounded-md bg-muted"><div className="h-full rounded-md bg-emerald-500" style={{ width: (r.einnahmen / ausMax) * 100 + "%" }} /></div>
+                </div>
+                <div>
+                  <div className="mb-1 flex justify-between text-xs"><span className="text-muted-foreground">Ausgaben</span><span className="font-medium">{formatEuro(r.ausgaben)}</span></div>
+                  <div className="flex h-6 overflow-hidden rounded-md bg-muted" style={{ width: (r.ausgaben / ausMax) * 100 + "%" }}>
+                    {seg(r.ausgabenNachArt.hausverwaltung, r.ausgaben, "bg-rose-500", "Hausverwaltung")}
+                    {seg(r.ausgabenNachArt.grundsteuer, r.ausgaben, "bg-amber-500", "Grundsteuer")}
+                    {seg(r.ausgabenNachArt.sonstige_ausgabe, r.ausgaben, "bg-slate-400", "Sonstige")}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                    <Legende farbe="bg-rose-500" text={"Hausverwaltung " + formatEuro(r.ausgabenNachArt.hausverwaltung)} />
+                    <Legende farbe="bg-amber-500" text={"Grundsteuer " + formatEuro(r.ausgabenNachArt.grundsteuer)} />
+                    {r.ausgabenNachArt.sonstige_ausgabe > 0 ? <Legende farbe="bg-slate-400" text={"Sonstige " + formatEuro(r.ausgabenNachArt.sonstige_ausgabe)} /> : null}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium">Monatlicher Cashflow {jahr}</p>
+                <CashflowChart perMonat={r.perMonat} />
+                <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground"><Legende farbe="bg-emerald-500" text="Einnahmen" /><Legende farbe="bg-rose-500" text="Ausgaben" /></div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Abgang titel="Hausverwaltung" ist={r.ausgabenNachArt.hausverwaltung} st={hv} erwartetJahr={kosten.hausverwaltungJahr} />
+                <Abgang titel="Grundsteuer" ist={r.ausgabenNachArt.grundsteuer} st={gs} erwartetJahr={kosten.grundsteuerJahr} />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Buchung erfassen</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <Grid>
+                <Field label="Art"><Select value={neu.art} onChange={(e) => setNeu(Object.assign({}, neu, { art: e.target.value }))}>{Object.keys(TRANSAKTION_ART).map((a) => <option key={a} value={a}>{TRANSAKTION_ART[a]} {istEinnahme(a) ? "(Einnahme)" : "(Ausgabe)"}</option>)}</Select></Field>
+                <Field label="Datum"><Input type="date" value={neu.datum} onChange={(e) => setNeu(Object.assign({}, neu, { datum: e.target.value }))} /></Field>
+                <Field label="Betrag (€)" hint="Vorzeichen wird aus der Art abgeleitet."><NumberInput value={parseNumber(neu.betrag)} onValueChange={(v) => setNeu(Object.assign({}, neu, { betrag: v == null ? "" : String(v).replace(".", ",") }))} /></Field>
+                <Field label="Verwendungszweck"><Input value={neu.zweck} onChange={(e) => setNeu(Object.assign({}, neu, { zweck: e.target.value }))} /></Field>
+              </Grid>
+              <Button size="sm" onClick={buchen} disabled={!neu.datum || parseNumber(neu.betrag) == null}>➕ Buchung hinzufügen</Button>
+              {eigene.length > 0 ? <div>
+                <p className="mb-2 text-sm font-medium">Buchungen {jahr} ({eigene.length})</p>
+                <div className="divide-y divide-border rounded-lg border border-border">
+                  {eigene.map((t) => <div key={t.id} className="flex items-center justify-between gap-2 p-2.5 text-sm">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2"><span className={t.betrag >= 0 ? "font-medium text-emerald-700" : "font-medium text-rose-700"}>{t.betrag >= 0 ? "+" : "−"}{formatEuro(Math.abs(t.betrag))}</span><Badge variant="secondary">{TRANSAKTION_ART[t.art]}</Badge></div>
+                      <p className="truncate text-xs text-muted-foreground">{new Date(t.datum).toLocaleDateString("de-DE")} · {t.verwendungszweck || t.gegenpartei || "–"}{t.quelle === "demo" ? " · Demo" : ""}</p>
+                    </div>
+                    <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-destructive" onClick={async () => { await bankService.deleteTransaktion(t.id); laden(); }}>🗑️</Button>
+                  </div>)}
+                </div>
+              </div> : null}
+            </CardContent>
+          </Card>
+        </div>;
+      }
+
       /* ------------------------------------------------------------------ */
       /*  Seiten                                                             */
       /* ------------------------------------------------------------------ */
@@ -879,6 +1044,7 @@
         { key: "mieter", label: "Mieter", icon: "👥", C: MieterTab },
         { key: "miete", label: "Miete & Nebenkosten", icon: "🧾", C: MieteTab },
         { key: "mieteingang", label: "Mieteingang", icon: "🏦", C: MieteingangTab },
+        { key: "rentabilitaet", label: "Rentabilität", icon: "📈", C: RentabilitaetTab },
         { key: "hausverwaltung", label: "Hausverwaltung & NK", icon: "📄", C: HausverwaltungTab },
         { key: "protokoll", label: "Protokoll", icon: "📋", C: ProtokollTab },
       ];
@@ -919,7 +1085,36 @@
         </div>;
       }
 
+      function FinanzZeile({ w, transaktionen, jahr, onOpen }) {
+        const miete = mieteStatusKompakt(w, transaktionen, jahr);
+        const r = rentabilitaet(w, transaktionen, jahr);
+        const kosten = erwarteteKosten(w);
+        const hv = abgangStatus(r.ausgabenNachArt.hausverwaltung, kosten.hausverwaltungJahr, jahr);
+        const gs = abgangStatus(r.ausgabenNachArt.grundsteuer, kosten.grundsteuerJahr, jahr);
+        const mieteBadge = !miete.hatMiete ? ["secondary", "keine Miete"] : (miete.aktuell ? ["success", "aktuell"] : ["danger", miete.offen + " offen"]);
+        const chip = (icon, label, b) => <div className="flex items-center gap-1.5"><span>{icon}</span><span className="text-muted-foreground">{label}:</span><Badge variant={b[0]}>{b[1]}</Badge></div>;
+        const max = Math.max(r.einnahmen, r.ausgaben, 1);
+        return <button onClick={() => onOpen(w.id)} className="block w-full rounded-lg border border-border p-4 text-left transition-colors hover:bg-accent/50">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0"><p className="font-medium">{w.bezeichnung || "Ohne Namen"}</p><p className="text-xs text-muted-foreground">{w.ort || "–"}</p></div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+              {chip("💶", "Miete", mieteBadge)}
+              {chip("🏢", "Hausverwaltung", RENTA_STATUS[hv.status])}
+              {chip("🏛️", "Grundsteuer", RENTA_STATUS[gs.status])}
+              <div className="text-right"><p className="text-muted-foreground">Saldo</p><p className={"font-semibold " + (r.saldo >= 0 ? "text-emerald-700" : "text-rose-700")}>{formatEuro(r.saldo)}</p></div>
+            </div>
+          </div>
+          {(r.einnahmen !== 0 || r.ausgaben !== 0) ? <div className="mt-3 space-y-1">
+            <div className="flex items-center gap-2"><span className="w-16 shrink-0 text-[10px] text-muted-foreground">Einnahmen</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500" style={{ width: (r.einnahmen / max) * 100 + "%" }} /></div></div>
+            <div className="flex items-center gap-2"><span className="w-16 shrink-0 text-[10px] text-muted-foreground">Ausgaben</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-rose-500" style={{ width: (r.ausgaben / max) * 100 + "%" }} /></div></div>
+          </div> : null}
+        </button>;
+      }
+
       function Dashboard({ wohnungen, onOpen }) {
+        const [transaktionen, setTransaktionen] = useState([]);
+        const jahr = new Date().getFullYear();
+        useEffect(() => { bankService.getTransaktionen().then(setTransaktionen); }, []);
         const zeilen = useMemo(() => wohnungen.map((w) => ({ w, frist: berechneFrist(w.kaufdatum) })).sort((a, b) => (a.frist.ende ? a.frist.ende.getTime() : Infinity) - (b.frist.ende ? b.frist.ende.getTime() : Infinity)), [wohnungen]);
         const kauf = wohnungen.reduce((s, w) => s + (w.kaufpreis || 0), 0);
         const kalt = wohnungen.reduce((s, w) => s + (w.miete.kaltmiete || 0), 0);
@@ -940,6 +1135,14 @@
                 </div>
                 <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted"><div className={cx("h-full rounded-full", bar[frist.status])} style={{ width: frist.fortschritt + "%" }} /></div>
               </button>)}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>💶 Finanzstatus je Wohnung ({jahr})</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {wohnungen.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Wohnung angelegt.</p> : null}
+              {transaktionen.length === 0 && wohnungen.length > 0 ? <p className="rounded-md bg-amber-50 p-3 text-xs text-amber-800">Noch keine Kontobewegungen. Im Reiter „Mieteingang" einer Wohnung lassen sich Demodaten laden oder Umsätze importieren.</p> : null}
+              {wohnungen.map((w) => <FinanzZeile key={w.id} w={w} transaktionen={transaktionen} jahr={jahr} onOpen={onOpen} />)}
             </CardContent>
           </Card>
           <p className="rounded-md bg-muted p-3 text-xs text-muted-foreground">ℹ️ Keine Steuerberatung – bitte steuerliche Fragen mit einem Fachberater klären. Die 10-Jahres-Frist bezieht sich auf § 23 EStG (privater Veräußerungsgewinn).</p>

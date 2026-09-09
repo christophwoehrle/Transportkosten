@@ -45,8 +45,11 @@ CDN geladen und der Code per Babel direkt im Browser transpiliert – kein
 - **Dashboard mit Zeitstrahl** der 10-Jahres-Frist (Spekulationsfrist § 23 EStG):
   Fortschrittsbalken, Rest­laufzeit, Farbstatus (rot/gelb/grün), sortiert nach
   nächstem Fristende.
+- **Finanzstatus je Wohnung** auf dem Dashboard: zeigt, ob die **Mieteingänge
+  aktuell** sind, sowie den Status der **Abgänge an Hausverwaltung und
+  Grundsteuer** (aktuell/teilweise/offen) und den **Saldo (YTD)** mit Mini-Balken.
 - **Wohnungen** anlegen, bearbeiten, löschen; Karten­ansicht mit Suchfeld.
-- Pro Wohnung 9 Reiter:
+- Pro Wohnung 10 Reiter:
   1. **Grunddaten** – Adresse, Fläche, Zimmer, Ausstattung, Heizung, Kaufpreis/-datum;
      **Google-Maps-Link** zur Immobilie (aus der Adresse).
   2. **Fotos** – Fotoalbum mit Grundfotos (Upload **oder** Kamera-Aufnahme),
@@ -65,11 +68,15 @@ CDN geladen und der Code per Babel direkt im Browser transpiliert – kein
      Kontobewegungen werden gegen die erwartete Warmmiete abgeglichen und je Monat
      als *bezahlt / offen / ausstehend* angezeigt. Buchungen per CSV, aus Datei,
      manuell oder als Demodaten. Gekapselt hinter `BankService` (siehe unten).
-  8. **Hausverwaltung & NK-Abrechnung** – Abrechnungen hochladen/scannen; Kostenposten
+  8. **Rentabilität** – **Einnahmen/Ausgaben-Vergleich** je Wohnung aus den Konto­zu-
+     und -abgängen: Kennzahlen (Einnahmen, Ausgaben, Saldo, Rendite), Vergleichs­balken,
+     **monatlicher Cashflow als Diagramm**, Soll/Ist für Hausverwaltung und Grundsteuer.
+     Buchungen (Einnahme/Ausgabe je Art) direkt erfassbar.
+  9. **Hausverwaltung & NK-Abrechnung** – Abrechnungen hochladen/scannen; Kostenposten
      erfassen, per **Checkbox** als umlagefähig markieren; die App verrechnet die
      umlagefähigen Kosten mit der Vorauszahlung und zeigt **Nachzahlung/Guthaben**.
      Ausgabe als **druck-/PDF-fähige** Ansicht (Button „Als PDF / Drucken").
-  9. **Protokoll** – Reparaturen/Wartungen/Schäden dokumentieren: Art, Datum,
+  10. **Protokoll** – Reparaturen/Wartungen/Schäden dokumentieren: Art, Datum,
      Kontakt (Name/E-Mail/Telefon), **Beleg-Upload oder -Scan**, Status
      *behoben ja/nein* sowie optionale **Mietminderung** (von/bis, geminderte Miete).
 
@@ -93,7 +100,8 @@ wohnungsverwaltung/
    │  └─ iban.ts             # IBAN-/BIC-Validierung
    ├─ lib/
    │  ├─ utils.ts            # + googleMapsUrl(), 10-Jahres-Frist
-   │  └─ mieteingang.ts      # Abgleich Kontobewegung ↔ erwartete Miete
+   │  ├─ mieteingang.ts      # Abgleich Kontobewegung ↔ erwartete Miete
+   │  └─ rentabilitaet.ts    # Einnahmen/Ausgaben, Soll/Ist der Abgänge
    ├─ data/
    │  ├─ db.ts               # Dexie/IndexedDB-Schema (v2: transaktionen)
    │  ├─ repository.ts       # >> Repository-Schicht (einziger Datenzugriff)

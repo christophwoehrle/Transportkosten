@@ -71,6 +71,8 @@ export function MieteingangTab({ wohnung }: TabProps) {
       verwendungszweck: neu.zweck,
       gegenpartei: wohnung.mieter.name,
       iban: wohnung.mieter.iban,
+      art: "miete",
+      wohnungId: wohnung.id,
       quelle: "manuell",
     });
     setNeu({ datum: "", betrag: "", zweck: "" });

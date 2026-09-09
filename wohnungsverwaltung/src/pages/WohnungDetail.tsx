@@ -9,6 +9,7 @@ import {
   Home,
   Images,
   Landmark,
+  LineChart,
   Receipt,
   Users,
   Wallet,
@@ -25,6 +26,7 @@ import { HausverwaltungTab } from "./tabs/HausverwaltungTab";
 import { FotosTab } from "./tabs/FotosTab";
 import { ProtokollTab } from "./tabs/ProtokollTab";
 import { MieteingangTab } from "./tabs/MieteingangTab";
+import { RentabilitaetTab } from "./tabs/RentabilitaetTab";
 
 export interface TabProps {
   wohnung: Wohnung;
@@ -39,6 +41,7 @@ const TABS = [
   { key: "mieter", label: "Mieter", icon: Users },
   { key: "miete", label: "Miete & Nebenkosten", icon: Receipt },
   { key: "mieteingang", label: "Mieteingang", icon: Wallet },
+  { key: "rentabilitaet", label: "Rentabilität", icon: LineChart },
   { key: "hausverwaltung", label: "Hausverwaltung & NK", icon: FileText },
   { key: "protokoll", label: "Protokoll", icon: ClipboardList },
 ];
@@ -141,6 +144,9 @@ export function WohnungDetail() {
         </TabsContent>
         <TabsContent value="mieteingang">
           <MieteingangTab {...tabProps} />
+        </TabsContent>
+        <TabsContent value="rentabilitaet">
+          <RentabilitaetTab {...tabProps} />
         </TabsContent>
         <TabsContent value="hausverwaltung">
           <HausverwaltungTab {...tabProps} />

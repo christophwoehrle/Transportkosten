@@ -80,3 +80,24 @@ export const MONATE_KURZ = [
   "Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
   "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
 ];
+
+export interface MieteStatusKompakt {
+  aktuell: boolean; // keine vergangenen Monate offen
+  bezahlt: number;
+  offen: number; // vergangene/aktuelle Monate ohne Eingang
+  hatMiete: boolean;
+}
+
+/** Kompakter Mieteingangs-Status (für Dashboard-Übersicht). */
+export function mieteStatusKompakt(
+  w: Wohnung,
+  transaktionen: BankTransaktion[],
+  jahr: number,
+  jetzt = new Date()
+): MieteStatusKompakt {
+  const warm = erwarteteMiete(w).warm;
+  const monate = mieteingangJahr(w, transaktionen, jahr, jetzt);
+  const bezahlt = monate.filter((m) => m.status === "bezahlt").length;
+  const offen = monate.filter((m) => m.status === "offen").length;
+  return { aktuell: offen === 0, bezahlt, offen, hatMiete: warm > 0 };
+}

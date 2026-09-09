@@ -1,5 +1,6 @@
 import type { BankTransaktion } from "@/types";
 import { uid } from "@/lib/utils";
+import { erwarteteKosten } from "@/lib/rentabilitaet";
 import { db } from "./db";
 
 /**
@@ -123,6 +124,7 @@ class LocalBankService implements BankService {
         verwendungszweck: (hatHeader ? f[iZweck] : f[2]) || "",
         gegenpartei: (hatHeader ? f[iName] : f[3]) || "",
         iban: (hatHeader ? f[iIban] : f[4]) || "",
+        art: betrag >= 0 ? "miete" : "sonstige_ausgabe",
         quelle: "import",
         createdAt: Date.now(),
       });
@@ -138,22 +140,65 @@ class LocalBankService implements BankService {
     const neu: BankTransaktion[] = [];
 
     // Für jede Wohnung mit Mieter monatliche Warmmiete-Eingänge erzeugen –
-    // ein zurückliegender Monat wird ausgelassen (zeigt "offen").
+    // ein zurückliegender Monat wird ausgelassen (zeigt "offen") – plus die
+    // Abgänge an Hausverwaltung (monatlich) und Grundsteuer (quartalsweise).
     wohnungen.forEach((w, wi) => {
       const warm = (w.miete.kaltmiete ?? 0) + (w.miete.betriebskosten ?? 0);
-      if (!w.mieter.name || warm <= 0) return;
+      const kosten = erwarteteKosten(w);
       const auslassen = wi % 12; // je Wohnung ein anderer fehlender Monat
+
       for (let m = 0; m <= heutigerMonat; m++) {
-        if (m === auslassen) continue;
-        neu.push({
-          id: uid(),
-          datum: `${jahr}-${String(m + 1).padStart(2, "0")}-03`,
-          betrag: warm,
-          verwendungszweck: `Miete ${MONATE[m]} ${jahr}`,
-          gegenpartei: w.mieter.name,
-          iban: w.mieter.iban || "",
-          quelle: "demo",
-          createdAt: Date.now(),
+        const mm = String(m + 1).padStart(2, "0");
+        // Mieteingang
+        if (w.mieter.name && warm > 0 && m !== auslassen) {
+          neu.push({
+            id: uid(),
+            datum: `${jahr}-${mm}-03`,
+            betrag: warm,
+            verwendungszweck: `Miete ${MONATE[m]} ${jahr}`,
+            gegenpartei: w.mieter.name,
+            iban: w.mieter.iban || "",
+            art: "miete",
+            wohnungId: w.id,
+            quelle: "demo",
+            createdAt: Date.now(),
+          });
+        }
+        // Hausverwaltung (monatlich)
+        if (kosten.hausverwaltungJahr && kosten.hausverwaltungJahr > 0) {
+          neu.push({
+            id: uid(),
+            datum: `${jahr}-${mm}-28`,
+            betrag: -Math.round((kosten.hausverwaltungJahr / 12) * 100) / 100,
+            verwendungszweck: `Hausverwaltung ${MONATE[m]} ${jahr}`,
+            gegenpartei: "Hausverwaltung",
+            iban: "",
+            art: "hausverwaltung",
+            wohnungId: w.id,
+            quelle: "demo",
+            createdAt: Date.now(),
+          });
+        }
+      }
+
+      // Grundsteuer quartalsweise (Fälligkeiten 15.2., 15.5., 15.8., 15.11.)
+      if (kosten.grundsteuerJahr && kosten.grundsteuerJahr > 0) {
+        const rate = Math.round((kosten.grundsteuerJahr / 4) * 100) / 100;
+        [1, 4, 7, 10].forEach((mon) => {
+          if (mon <= heutigerMonat) {
+            neu.push({
+              id: uid(),
+              datum: `${jahr}-${String(mon + 1).padStart(2, "0")}-15`,
+              betrag: -rate,
+              verwendungszweck: `Grundsteuer Q${Math.floor(mon / 3) + 1} ${jahr}`,
+              gegenpartei: "Finanzamt / Gemeinde",
+              iban: "",
+              art: "grundsteuer",
+              wohnungId: w.id,
+              quelle: "demo",
+              createdAt: Date.now(),
+            });
+          }
         });
       }
     });
