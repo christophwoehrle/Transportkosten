@@ -62,6 +62,16 @@ die eingebetteten Daten vom Live-Upload ab.
   genutzt — die Mini-Variante wirft `parse_xlscfb is not defined`.
 - **Dateityp-Erkennung** beim Upload erfolgt zuerst am **Dateinamen**
   (`fracht` → Ausgangsfrachten, `umsatz` → Umsatz), dann an den Spalten.
+- **Zwei Upload-Buttons, ein Format:** „Excel-Liste hochladen" (Karte) **und**
+  „Umsatz-Excel hochladen" (Umsatz-Panel) akzeptieren beide die einblättrige
+  Frachten-/Umsatz-Auswertung — `crmHandleExcelUpload` erkennt sie über
+  `detectUploadKind` und reicht sie an `processFrachtUpload`/`processUmsatzUpload`
+  weiter. Die alte **CRM-Mehrblatt-Vorlage** (Blätter Kunden/Umsaetze/Produkte/
+  Logistik/Fahrten) greift nur noch, wenn solche Blätter vorhanden sind.
+- **Umsatz-Betrag:** bevorzugt Spalte `Netto`/`Umsatz`; fehlt sie, wird
+  `Fracht-Entgelt` (Spalte D) genutzt, da die Umsatz-Auswertung teils dieselbe
+  Spaltenvorlage wie die Frachtenauswertung hat. Gespiegelt in `app.js`
+  (`processUmsatzUpload`) und `scripts/data/build_umsatz_data.py`.
 - **Lieferadresse vor Rechnungsadresse (Frachtenauswertung):** Weichen die
   Adressen ab, hat die **Lieferadresse** Vorrang. Deren PLZ steht in **Spalte M**
   (Index 12). Ist Spalte M befüllt, gilt diese PLZ, sonst die Standardadresse in

@@ -1620,12 +1620,19 @@ function processUmsatzUpload(wb){
   let total=0, nBeleg=0;
 
   for(const o of rows){
-    // Spalte D: Umsatz / Netto
-    const ums = parseGermanNumber(col(o,'umsatz','netto'));
+    // Betrag: bevorzugt "Umsatz"/"Netto". Fällt auf "Fracht-Entgelt" zurück, da
+    // die Umsatz-Auswertung teils dieselbe Spaltenvorlage wie die
+    // Frachtenauswertung nutzt (Betrag dann in Spalte D "Fracht-Entgelt").
+    const ums = parseGermanNumber(col(o,'umsatz','netto','fracht-entgelt','fracht entgelt','frachtentgelt','frachtpreis','entgelt'));
     if(ums==null || isNaN(ums)) continue;
     // Spalte B: Frachtzone / Zone / Land (Inhalt: Zone/Nummer)
     const zone = col(o,'frachtzone','zone','land');
-    const plz  = col(o,'plz','postleit');
+    // PLZ wie bei den Frachten: Lieferadresse (Spalte M) vor Standardadresse
+    // (Spalte C); beide positionsbezogen, da in dieser Vorlage BEIDE Spalten
+    // "PLZ" heißen und die Header-Erkennung sonst nicht eindeutig wäre.
+    const plzLiefer = o.__cells ? o.__cells[12] : null;   // Spalte M (Vorrang)
+    const plzStd    = o.__cells ? o.__cells[2] : col(o,'plz','postleit');  // Spalte C
+    const plz = (plzLiefer!=null && String(plzLiefer).trim()!=='') ? plzLiefer : plzStd;
     const land = frachtZoneToCountry(zone, plz);
     const uname = land ? plzToUnitName(land, plz) : null;
     const kunde = col(o,'kunde','kundenkuerzel','adressesb'); const kcode = kunde ? String(kunde).trim() : null;

@@ -55,10 +55,14 @@ def main():
     c_datum = find_col(C, "datum")
     c_zone = find_col(C, "frachtzone", "zone", "land")
     c_plz = find_col(C, "plz", "postleit")
-    c_netto = find_col(C, "netto", "umsatz")
+    # Betrag: bevorzugt Netto/Umsatz, sonst Fracht-Entgelt (die Umsatz-Auswertung
+    # nutzt teils dieselbe Spaltenvorlage wie die Frachtenauswertung).
+    c_netto = find_col(C, "netto", "umsatz", "fracht-entgelt", "frachtentgelt", "frachtpreis", "entgelt")
     c_beleg = find_col(C, "nummer", "belegnummer", "lieferschein")
     c_kunde = find_col(C, "kunde", "kundenkuerzel")
     c_art = find_col(C, "artikel")
+    # Lieferadresse hat Vorrang: deren PLZ steht in Spalte M (Index 12), sonst Spalte C.
+    c_plz_liefer = C[12] if len(C) > 12 else None
 
     unit_rev, cust_rev, trips = {}, {}, []
     total = 0.0
@@ -67,8 +71,13 @@ def main():
         if pd.isna(netto):
             continue
         netto = float(netto)
-        land = zone_to_country(r.get(c_zone), r.get(c_plz))
-        unit = plz_to_unit(land, r.get(c_plz)) if land else None
+        plz_val = r.get(c_plz)
+        if c_plz_liefer is not None:
+            m = r.get(c_plz_liefer)
+            if pd.notna(m) and str(m).strip() != "":
+                plz_val = m
+        land = zone_to_country(r.get(c_zone), plz_val)
+        unit = plz_to_unit(land, plz_val) if land else None
         kunde = str(r.get(c_kunde)).strip() if c_kunde and pd.notna(r.get(c_kunde)) else None
         art = str(r.get(c_art)).strip() if c_art and pd.notna(r.get(c_art)) else None
         beleg = str(r.get(c_beleg)).strip() if c_beleg and pd.notna(r.get(c_beleg)) else ""
