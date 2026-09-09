@@ -62,47 +62,61 @@ def zone_to_country(zone, plz):
 def plz_to_unit(land, plz):
     """PLZ -> Verwaltungseinheit-Name über plzMapping.
 
-    Deckt die verschiedenen PLZ-Systeme ab:
-      - UK: Outward Code (Teil vor dem Leerzeichen, z. B. 'CB22' aus 'CB22 4QH'),
-            längster passender Präfix gewinnt.
-      - NL: 4 Ziffern (z. B. '1017').
-      - Slowenien: erste Ziffer.
-      - Übrige (FR/DE/IT/ES/PT/BE/CH ...): 1-3 Ziffern Präfix.
+    Getreuer Port von plzToUnitName() in app.js — pro Land unterschiedlich, damit
+    die eingebetteten Daten exakt der Live-Upload-Zuordnung entsprechen. Bei
+    Änderungen BEIDE Stellen mitziehen (siehe CLAUDE.md).
+
+      - DE/FR:   2-stelliger Präfix (nur Leerzeichen entfernt, Buchstaben bleiben).
+      - AT:      1-stelliger Präfix.
+      - UK/IRL:  Outward-Code vor dem Leerzeichen; nordirische BT…-Codes werden
+                 unter „Irland" über das UK-Mapping aufgelöst; danach werden
+                 endständige Ziffern schrittweise abgeschnitten.
+      - NL:      2 Ziffern.
+      - SLO:     erste Ziffer (sonst 'default').
+      - IT/ES/PT/BE/CH: 3/2/1 Ziffern Präfix.
     """
     if not land or land not in PLZ_MAPPING:
         return None
     mapping = PLZ_MAPPING[land]
     p = "" if plz is None else str(plz).strip()
 
-    # Slowenien: erste Ziffer
+    if land in ("Deutschland", "Frankreich"):
+        return mapping.get(p.replace(" ", "")[:2]) or None
+
+    if land == "Österreich":
+        return mapping.get(p.replace(" ", "")[:1]) or None
+
+    if land in ("UK", "Irland"):
+        outward = p.split(" ")[0].upper() if " " in p else p.upper()
+        src = mapping
+        if outward and outward[0].isalpha() and land == "Irland" and "UK" in PLZ_MAPPING:
+            src = PLZ_MAPPING["UK"]
+        if outward in src:
+            return src[outward]
+        while len(outward) > 1 and outward[-1].isdigit():
+            outward = outward[:-1]
+            if outward in src:
+                return src[outward]
+        return None
+
+    if land == "Niederlande":
+        digits = re.sub(r"\D", "", p)
+        return (mapping.get(digits[:2]) or None) if digits else None
+
     if land == "Slowenien":
         digits = re.sub(r"\D", "", p)
         if digits:
             return mapping.get(digits[:1]) or mapping.get("default")
         return mapping.get("default")
 
-    # UK: Outward Code (alphanumerisch, vor dem Leerzeichen). Längster Präfix zuerst.
-    if land == "UK":
-        outward = p.split(" ")[0].upper() if " " in p else p.upper()
-        for n in range(len(outward), 0, -1):
-            if outward[:n] in mapping:
-                return mapping[outward[:n]]
-        return mapping.get("default")
-
-    # Niederlande: 4 Ziffern
-    if land == "Niederlande":
+    if land in ("Italien", "Spanien", "Portugal", "Belgien", "Schweiz"):
         digits = re.sub(r"\D", "", p)
-        for n in (4, 3, 2):
+        for n in (3, 2, 1):
             if digits[:n] in mapping:
                 return mapping[digits[:n]]
-        return mapping.get("default")
+        return None
 
-    # Übrige Länder: numerischer Präfix, längster zuerst
-    digits = re.sub(r"\D", "", p)
-    for n in (3, 2, 1):
-        if digits[:n] in mapping:
-            return mapping[digits[:n]]
-    return mapping.get("default")
+    return None
 
 
 def parse_date(val):

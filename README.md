@@ -35,6 +35,21 @@ Voraussetzung: **Python 3** (nur Standardbibliothek, keine Pakete nötig).
 
 ---
 
+## Testen
+
+Ein automatisierter Rauchtest baut `dist/` neu und prüft die Kernzahlen
+(Umsatz-, Fracht-, Fahrten- und Kundensumme) in beiden gebauten HTML-Dateien —
+ganz ohne Browser oder Fremdpakete:
+
+```bash
+python scripts/test_smoke.py             # neu bauen + prüfen
+python scripts/test_smoke.py --no-build  # nur vorhandene dist/-Dateien prüfen
+```
+
+Exit-Code 0 = bestanden, 1 = eine Kennzahl weicht ab (CI-/Pre-Push-tauglich).
+
+---
+
 ## Projektstruktur
 
 ```
@@ -142,6 +157,11 @@ Siehe `docs/DATEN-AKTUALISIEREN.md` für Details zu den erwarteten Excel-Spalten
 | H      | Anzahl Belege       |
 | I      | Kundenkürzel        |
 | J      | Artikel             |
+| M      | Lieferadresse-PLZ (Vorrang, s. u.) |
+
+Weichen **Rechnungs- und Lieferadresse** ab, hat die Lieferadresse Vorrang:
+Ist die PLZ in **Spalte M** befüllt, wird sie verwendet, sonst die PLZ aus
+**Spalte C**.
 
 **Umsatz** (Dateiname enthält „umsatz“):
 

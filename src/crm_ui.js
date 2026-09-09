@@ -379,8 +379,8 @@ function crmRenderStats(){
         <th class="num">Ø Kosten/Fahrt</th><th class="num">Kosten gesamt</th><th class="bar-col">Verteilung</th>
       </tr></thead>
       <tbody>
-        ${s.speditionen.map(x=>`<tr>
-          <td class="log-carrier">${escapeHtml(x.name)}</td>
+        ${s.speditionen.map((x,i)=>`<tr>
+          <td class="log-carrier st-carrier" data-sped="${i}"><span class="st-carrier-name">${escapeHtml(x.name)}</span></td>
           <td class="num strong">${fmtNum(x.fahrten)}</td>
           <td class="num">${(x.anteil*100).toFixed(1)}%</td>
           <td class="num">${fmtEur(x.schnitt)}</td>
@@ -443,6 +443,69 @@ function crmRenderStats(){
   // Umschaltung Monat / Kalenderwoche im Verlaufsdiagramm
   body.querySelectorAll('.st-toggle-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{ crmStatVerlauf = btn.dataset.v; crmRenderStats(); });
+  });
+
+  // Hover über den Speditionsnamen: in welche Länder wie oft gefahren wurde
+  crmWireSpedCountryTips(body, s.speditionen);
+}
+
+// ---- Länder-Aufschlüsselung je Spedition als Hover-Tooltip ----
+// Ein einziges, fixes Tooltip-Element (über dem Modal), Styles einmalig injiziert
+// — funktioniert dadurch identisch in Desktop- und Mobil-Build.
+function crmSpedTipEl(){
+  let tip = document.getElementById('stSpedTip');
+  if(tip) return tip;
+  if(!document.getElementById('stSpedTipStyle')){
+    const st = document.createElement('style');
+    st.id = 'stSpedTipStyle';
+    st.textContent =
+      'td.st-carrier{cursor:help;}' +
+      'td.st-carrier .st-carrier-name{border-bottom:1px dotted rgba(0,0,0,.45);}' +
+      '#stSpedTip{position:fixed;z-index:100000;max-width:320px;background:#1f2733;color:#fff;' +
+      'border-radius:8px;padding:9px 12px;font-size:12px;line-height:1.45;' +
+      'box-shadow:0 8px 28px rgba(0,0,0,.30);pointer-events:none;display:none;}' +
+      '#stSpedTip .st-tip-head{font-weight:700;margin-bottom:6px;padding-bottom:5px;' +
+      'border-bottom:1px solid rgba(255,255,255,.18);}' +
+      '#stSpedTip table{width:100%;border-collapse:collapse;}' +
+      '#stSpedTip td{padding:1px 0;white-space:nowrap;}' +
+      '#stSpedTip td.n{text-align:right;padding-left:16px;font-variant-numeric:tabular-nums;}' +
+      '#stSpedTip td.p{text-align:right;padding-left:10px;opacity:.6;}';
+    document.head.appendChild(st);
+  }
+  tip = document.createElement('div');
+  tip.id = 'stSpedTip';
+  document.body.appendChild(tip);
+  return tip;
+}
+
+function crmSpedTipHtml(x){
+  const rows = x.laender.map(l =>
+    `<tr><td>${escapeHtml(l.land)}</td>` +
+    `<td class="n">${fmtNum(l.fahrten)}</td>` +
+    `<td class="p">${(l.anteil*100).toFixed(0)}%</td></tr>`).join('');
+  const laenderZahl = x.laender.length;
+  return `<div class="st-tip-head">${escapeHtml(x.name)} · ${fmtNum(x.fahrten)} Fahrten ` +
+         `in ${laenderZahl} ${laenderZahl===1?'Land':'Ländern'}</div>` +
+         `<table>${rows}</table>`;
+}
+
+function crmWireSpedCountryTips(body, speditionen){
+  const tip = crmSpedTipEl();
+  tip.style.display = 'none';
+  const place = (ev)=>{
+    const pad = 14, r = tip.getBoundingClientRect();
+    let x = ev.clientX + pad, y = ev.clientY + pad;
+    if(x + r.width  > window.innerWidth  - 8) x = ev.clientX - r.width  - pad;
+    if(y + r.height > window.innerHeight - 8) y = ev.clientY - r.height - pad;
+    tip.style.left = Math.max(8, x) + 'px';
+    tip.style.top  = Math.max(8, y) + 'px';
+  };
+  body.querySelectorAll('td.st-carrier').forEach(td=>{
+    const x = speditionen[+td.dataset.sped];
+    if(!x || !x.laender || !x.laender.length) return;
+    td.addEventListener('mouseenter', (ev)=>{ tip.innerHTML = crmSpedTipHtml(x); tip.style.display = 'block'; place(ev); });
+    td.addEventListener('mousemove', place);
+    td.addEventListener('mouseleave', ()=>{ tip.style.display = 'none'; });
   });
 }
 

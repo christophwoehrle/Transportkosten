@@ -4,7 +4,9 @@ const COUNTRIES = APP_DATA.countries;
 const EUROPE_BBOX = APP_DATA.europeBbox;
 const PLZ_MAPPING = APP_DATA.plzMapping || {};
 const EXCEL_UPLOAD_DATE = APP_DATA.excelUploadDate || null;
-const COUNTRY_ORDER = ['Frankreich','Deutschland','Italien','Spanien','Portugal','Österreich','Schweiz','Slowenien','Belgien','Niederlande','Polen','UK','Irland','Schweden','Norwegen','Dänemark','Finnland','Island'];
+const COUNTRY_ORDER = ['Frankreich','Deutschland','Italien','Spanien','Portugal','Österreich','Schweiz','Slowenien','Belgien','Niederlande','Polen','UK','Irland','Schweden','Norwegen','Dänemark','Finnland','Island',
+  // Weitere EU-Länder ohne bisherige Fahrten/Umsätze (nur Länderumriss, erscheinen ohne Wert):
+  'Bulgarien','Estland','Griechenland','Kroatien','Lettland','Litauen','Luxemburg','Malta','Rumänien','Slowakei','Tschechien','Ungarn','Zypern'];
 const EUROPE_KEY = '__EUROPE__';
 const DEFAULT_CARRIER = 'Standard';
 
@@ -1529,6 +1531,9 @@ function sheetRowsAsObjects(wb){
       const row = rows[r]; if(!row) continue;
       const o = {};
       head.forEach((h,ci)=> o[h] = row[ci]);
+      // Rohzellen nach Spaltenindex mitführen — für positionsbezogene Spalten
+      // wie die Lieferadresse-PLZ in Spalte M (A=0 … M=12).
+      o.__cells = row;
       out.push(o);
     }
     return out;
@@ -1553,7 +1558,13 @@ function processFrachtUpload(wb){
   for(const o of rows){
     // Spalte B kann "Frachtzone", "Zone" oder "Land" heißen (Inhalt: Zone/Nummer)
     const zone = col(o,'frachtzone','zone','land');
-    const plz  = col(o,'plz','postleit');
+    // Lieferadresse hat Vorrang: ihre PLZ steht in Spalte M (Index 12), die
+    // Standard-/Rechnungsadresse in Spalte C (Index 2). Beide werden BEWUSST
+    // positionsbezogen gelesen — in der Frachtenauswertung tragen beide Spalten
+    // die Überschrift „PLZ", die Header-Erkennung wäre also nicht eindeutig.
+    const plzLiefer = o.__cells ? o.__cells[12] : null;                    // Spalte M (Vorrang)
+    const plzStd    = o.__cells ? o.__cells[2] : col(o,'plz','postleit');  // Spalte C (Fallback)
+    const plz = (plzLiefer!=null && String(plzLiefer).trim()!=='') ? plzLiefer : plzStd;
     const land = frachtZoneToCountry(zone, plz);
     const uname = land ? plzToUnitName(land, plz) : null;
     // Spalte D: Fracht-Entgelt / Frachtpreis / Preis / Entgelt
@@ -1579,7 +1590,7 @@ function processFrachtUpload(wb){
     if(kcode) customers.add(kcode);
     if(pr!=null && !isNaN(pr)){ sumPrice += pr; nPrice++; }
     newTrips.push({
-      date: iso, country: land, unit: uname, plz: plz!=null?String(plz):'',
+      date: iso, country: land, unit: uname, plz: plz!=null?String(plz).trim():'',
       price: (pr!=null && !isNaN(pr)) ? pr : 0,
       carrier: cname, customer: kcode,
       ls: belegNr!=null?String(belegNr):'', docs: (belegAnz!=null&&!isNaN(belegAnz))?belegAnz:1,
@@ -1609,12 +1620,19 @@ function processUmsatzUpload(wb){
   let total=0, nBeleg=0;
 
   for(const o of rows){
-    // Spalte D: Umsatz / Netto
-    const ums = parseGermanNumber(col(o,'umsatz','netto'));
+    // Betrag: bevorzugt "Umsatz"/"Netto". Fällt auf "Fracht-Entgelt" zurück, da
+    // die Umsatz-Auswertung teils dieselbe Spaltenvorlage wie die
+    // Frachtenauswertung nutzt (Betrag dann in Spalte D "Fracht-Entgelt").
+    const ums = parseGermanNumber(col(o,'umsatz','netto','fracht-entgelt','fracht entgelt','frachtentgelt','frachtpreis','entgelt'));
     if(ums==null || isNaN(ums)) continue;
     // Spalte B: Frachtzone / Zone / Land (Inhalt: Zone/Nummer)
     const zone = col(o,'frachtzone','zone','land');
-    const plz  = col(o,'plz','postleit');
+    // PLZ wie bei den Frachten: Lieferadresse (Spalte M) vor Standardadresse
+    // (Spalte C); beide positionsbezogen, da in dieser Vorlage BEIDE Spalten
+    // "PLZ" heißen und die Header-Erkennung sonst nicht eindeutig wäre.
+    const plzLiefer = o.__cells ? o.__cells[12] : null;   // Spalte M (Vorrang)
+    const plzStd    = o.__cells ? o.__cells[2] : col(o,'plz','postleit');  // Spalte C
+    const plz = (plzLiefer!=null && String(plzLiefer).trim()!=='') ? plzLiefer : plzStd;
     const land = frachtZoneToCountry(zone, plz);
     const uname = land ? plzToUnitName(land, plz) : null;
     const kunde = col(o,'kunde','kundenkuerzel','adressesb'); const kcode = kunde ? String(kunde).trim() : null;

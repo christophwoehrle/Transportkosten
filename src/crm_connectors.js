@@ -35,6 +35,34 @@ function crmHandleExcelUpload(ev){
   reader.onload = (e)=>{
     try{
       const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+
+      // Einblättrige Auswertung (Frachten/Umsatz) am Dateinamen/Spalten erkennen und
+      // an den passenden Handler geben. Nur wenn es KEINE CRM-Mehrblatt-Vorlage ist
+      // (Blätter Kunden/Umsaetze/Produkte/Logistik/Fahrten), sonst greift der Import unten.
+      const CRM_SHEET_NAMES = ['Kunden','Umsaetze','Umsätze','Produkte','Logistik','Fahrten'];
+      const hasCrmSheets = wb.SheetNames.some(sn => CRM_SHEET_NAMES.includes(String(sn).trim()));
+      if(!hasCrmSheets && typeof detectUploadKind === 'function'){
+        const kind = detectUploadKind(wb, file.name);
+        if(kind === 'umsatz' && typeof processUmsatzUpload === 'function'){
+          const res = processUmsatzUpload(wb);
+          if(typeof markUploadDone === 'function') markUploadDone('umsatz');
+          if(typeof crmApplyModule === 'function') crmApplyModule();
+          if(typeof crmRenderSidePanel === 'function') crmRenderSidePanel();
+          if(typeof renderMap === 'function') renderMap();
+          if(typeof updateResultCard === 'function') updateResultCard();
+          crmToast(`Umsatz übernommen: ${res.belegCount} Belege · ${res.unitCount} Einheiten · ${(res.totalRevenue||0).toLocaleString('de-DE')} € Gesamtumsatz.`);
+          return;
+        }
+        if(kind === 'fracht' && typeof processFrachtUpload === 'function'){
+          const res = processFrachtUpload(wb);
+          if(typeof markUploadDone === 'function') markUploadDone('fracht');
+          if(typeof renderMap === 'function') renderMap();
+          if(typeof updateResultCard === 'function') updateResultCard();
+          crmToast(`Frachten übernommen: ${res.tripCount} Fahrten · ${res.customerCount} Kunden · Ø ${(res.avgPrice||0).toLocaleString('de-DE')} € Fracht.`);
+          return;
+        }
+      }
+
       const parsed = { kunden:[], umsaetze:[], produkte:[], logistik:[], fahrten:[] };
       const map = {Kunden:'kunden', Umsaetze:'umsaetze', Umsätze:'umsaetze', Produkte:'produkte',
                    Logistik:'logistik', Fahrten:'fahrten'};

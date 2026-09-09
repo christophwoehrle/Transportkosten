@@ -12,6 +12,10 @@ Speditionsliste im Format, das die App erwartet.
 Spalten (tolerant erkannt, Reihenfolge wie in der Frachtenauswertung):
   A Datum · B Frachtzone · C PLZ · D Fracht-Entgelt · E Speditionsname
   F Menge · G Belegnummer · H Anzahl Belege · I Kundenkürzel · J Artikel
+
+Lieferadresse ≠ Rechnungsadresse: Ist die Lieferadresse-PLZ in Spalte M (Index
+12) befüllt, hat sie Vorrang; sonst wird die Standard-PLZ aus Spalte C genutzt.
+Dieselbe Regel steckt in app.js (processFrachtUpload) für den Live-Upload.
 """
 import sys
 import json
@@ -95,6 +99,9 @@ def main():
     c_datum = find_col(C, "datum")
     c_zone = find_col(C, "frachtzone", "zone", "land")
     c_plz = find_col(C, "plz", "postleit")
+    # Lieferadresse hat Vorrang: deren PLZ steht in Spalte M (Index 12, 0-basiert).
+    # Ist die Spalte befüllt, gilt diese PLZ, sonst die Standardadresse (Spalte C).
+    c_plz_liefer = C[12] if len(C) > 12 else None
     c_preis = find_col(C, "fracht-entgelt", "frachtentgelt", "frachtpreis", "entgelt", "preis")
     c_sped = find_col(C, "spedition", "speditionsname", "fracht-nachname", "nachname")
     c_menge = find_col(C, "menge")
@@ -107,8 +114,14 @@ def main():
 
     trips, cust_map, carriers = [], {}, set()
     for _, r in df.iterrows():
-        land = zone_to_country(r.get(c_zone), r.get(c_plz))
-        unit = plz_to_unit(land, r.get(c_plz)) if land else None
+        # Effektive PLZ: Lieferadresse (Spalte M) vor Standardadresse (Spalte C).
+        plz_val = r.get(c_plz)
+        if c_plz_liefer is not None:
+            m = r.get(c_plz_liefer)
+            if pd.notna(m) and str(m).strip() != "":
+                plz_val = m
+        land = zone_to_country(r.get(c_zone), plz_val)
+        unit = plz_to_unit(land, plz_val) if land else None
         price = r.get(c_preis)
         price = float(price) if pd.notna(price) else 0.0
         kunde = str(r.get(c_kunde)).strip() if pd.notna(r.get(c_kunde)) else None
@@ -119,7 +132,7 @@ def main():
         iso = parse_date(r.get(c_datum))
 
         t = {"date": iso, "country": land, "unit": unit,
-             "plz": str(r.get(c_plz)).strip() if pd.notna(r.get(c_plz)) else "",
+             "plz": str(plz_val).strip() if pd.notna(plz_val) else "",
              "price": round(price, 2), "carrier": sped, "customer": kunde,
              "ls": beleg, "docs": docs, "volume": round(vol, 3)}
         trips.append(t)

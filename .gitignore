@@ -1,0 +1,6 @@
+# Build-Ergebnisse (werden aus src/ + data/ erzeugt, nicht versioniert)
+dist/
+
+# Python
+__pycache__/
+*.pyc

@@ -8,7 +8,7 @@ const CRM_PREFIX = 'crm::';
 // Datenversion: bei jeder Änderung an den eingebetteten Demo-/Realdaten erhöhen.
 // Ist die gespeicherte Version älter, werden die eingebetteten Daten neu geladen
 // (so verschwinden z. B. alte 2025-Demo-Fahrten aus dem lokalen Speicher).
-const CRM_DATA_VERSION = 5;
+const CRM_DATA_VERSION = 6;
 const CRM_KEYS = {
   kunden:   CRM_PREFIX + 'kunden',
   umsaetze: CRM_PREFIX + 'umsaetze',
@@ -132,8 +132,11 @@ function crmFahrtStats(filter){
     const ym = iso.slice(0,7);
     const yw = isoWeekKey(iso);
 
-    if(!perSped.has(sped)) perSped.set(sped, {fahrten:0, kosten:0});
+    if(!perSped.has(sped)) perSped.set(sped, {fahrten:0, kosten:0, laender:new Map()});
     const s = perSped.get(sped); s.fahrten += anzahl; s.kosten += kosten;
+    // Je Spedition zusätzlich festhalten, in welche Länder wie oft gefahren wurde.
+    const land = unit[0] || '—';
+    s.laender.set(land, (s.laender.get(land) || 0) + anzahl);
 
     if(!perMonth.has(ym)) perMonth.set(ym, {fahrten:0, kosten:0});
     const m = perMonth.get(ym); m.fahrten += anzahl; m.kosten += kosten;
@@ -153,6 +156,10 @@ function crmFahrtStats(filter){
       name, fahrten: v.fahrten, kosten: v.kosten,
       anteil: gesamtFahrten ? v.fahrten / gesamtFahrten : 0,
       schnitt: v.fahrten ? v.kosten / v.fahrten : 0,
+      // Länderaufschlüsselung (absteigend nach Fahrten) für den Hover-Tooltip.
+      laender: [...v.laender.entries()]
+        .map(([land, f]) => ({land, fahrten: f, anteil: v.fahrten ? f / v.fahrten : 0}))
+        .sort((a,b)=> b.fahrten - a.fahrten),
     }))
     .sort((a,b)=> b.fahrten - a.fahrten);
 

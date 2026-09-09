@@ -205,7 +205,13 @@ function openCustomerPanel(code){
   myTrips.forEach(t=>{ if(t.carrier) carrierCount[t.carrier] = (carrierCount[t.carrier]||0)+1; });
   const topCarriers = Object.entries(carrierCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
 
-  const last = c.lastTrip || {};
+  // Letzte Fahrt aus den tatsächlichen Fahrten dieses Kunden bestimmen (jüngstes
+  // Datum). Die eingebetteten Kundenobjekte haben kein fertiges `lastTrip`-Feld,
+  // deshalb wurde der Block bisher leer angezeigt.
+  const datedTrips = myTrips.filter(t => t.date);
+  const last = datedTrips.length
+    ? datedTrips.reduce((a,b)=> (b.date >= a.date ? b : a))
+    : (myTrips.length ? myTrips[myTrips.length-1] : {});
 
   // Umsatz dieses Kunden (aus Umsatz.xls)
   const rev = CUSTOMER_REVENUE[code];

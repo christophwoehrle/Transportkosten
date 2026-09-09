@@ -62,6 +62,22 @@ die eingebetteten Daten vom Live-Upload ab.
   genutzt — die Mini-Variante wirft `parse_xlscfb is not defined`.
 - **Dateityp-Erkennung** beim Upload erfolgt zuerst am **Dateinamen**
   (`fracht` → Ausgangsfrachten, `umsatz` → Umsatz), dann an den Spalten.
+- **Zwei Upload-Buttons, ein Format:** „Excel-Liste hochladen" (Karte) **und**
+  „Umsatz-Excel hochladen" (Umsatz-Panel) akzeptieren beide die einblättrige
+  Frachten-/Umsatz-Auswertung — `crmHandleExcelUpload` erkennt sie über
+  `detectUploadKind` und reicht sie an `processFrachtUpload`/`processUmsatzUpload`
+  weiter. Die alte **CRM-Mehrblatt-Vorlage** (Blätter Kunden/Umsaetze/Produkte/
+  Logistik/Fahrten) greift nur noch, wenn solche Blätter vorhanden sind.
+- **Umsatz-Betrag:** bevorzugt Spalte `Netto`/`Umsatz`; fehlt sie, wird
+  `Fracht-Entgelt` (Spalte D) genutzt, da die Umsatz-Auswertung teils dieselbe
+  Spaltenvorlage wie die Frachtenauswertung hat. Gespiegelt in `app.js`
+  (`processUmsatzUpload`) und `scripts/data/build_umsatz_data.py`.
+- **Lieferadresse vor Rechnungsadresse (Frachtenauswertung):** Weichen die
+  Adressen ab, hat die **Lieferadresse** Vorrang. Deren PLZ steht in **Spalte M**
+  (Index 12). Ist Spalte M befüllt, gilt diese PLZ, sonst die Standardadresse in
+  **Spalte C**. Die Regel steckt gespiegelt in `app.js` (`processFrachtUpload`,
+  Live-Upload) **und** `scripts/data/build_fracht_data.py` (Einbettung) — beide
+  bei Änderungen mitziehen.
 - **Spaltennamen variieren** (z. B. Kunde als `Kunde` oder `adressesb`). Die
   Erkennung nutzt exakte Treffer vor Präfix-Treffern; siehe `col(...)` in app.js
   bzw. `find_col(...)` in den Python-Skripten.
@@ -74,14 +90,27 @@ die eingebetteten Daten vom Live-Upload ab.
 
 ## Testen
 
-Ein schneller Rauchtest mit Playwright (chromium) prüft die Kernzahlen:
+Automatisierter Rauchtest (nur Python-Standardbibliothek, kein Browser nötig).
+Baut `dist/` neu und prüft die Kernzahlen in **beiden** gebauten HTML-Dateien:
+
+```bash
+python scripts/test_smoke.py             # neu bauen + prüfen
+python scripts/test_smoke.py --no-build  # nur die vorhandenen dist/-Dateien prüfen
+```
+
+Exit-Code 0 = bestanden, 1 = mind. eine Kennzahl weicht ab — direkt für CI /
+einen Pre-Push-Hook geeignet. Die Sollwerte stehen zentral in
+`scripts/test_smoke.py` (`EXPECTED`) und sind bei bewusster Datenaktualisierung
+dort mitzuziehen.
+
+Die geprüften Kennzahlen entsprechen genau dem manuellen Browser-Test
+(`dist/…Desktop.html` laden, dann im Seitenkontext auswerten):
 
 ```js
-// dist/…Desktop.html im Browser laden, dann im Seitenkontext:
 Math.round(REVENUE_TRIPS.reduce((s,t)=>s+(t.revenue||0),0)*100)/100  // Umsatzsumme
 Math.round(TRIPS.reduce((s,t)=>s+(t.price||0),0)*100)/100            // Frachtsumme
 crmFahrtStats({}).gesamtFahrten                                       // Fahrtenzahl
 ```
 
-Sollwerte des aktuellen Stands: Umsatz 33.206.300,38 €, Fracht 3.762.146,70 €,
-3534 Fahrten, 282 Kunden.
+Sollwerte des aktuellen Stands: Umsatz 33.206.300,38 €, Fracht 4.110.519,79 €,
+3931 Fahrten, 290 Kunden.
